@@ -102,6 +102,7 @@ async function handleAuthResponse(resp) {
     hide('login-view');
     show('app-view');
     document.getElementById('month-input').value = state.month;
+    await ensureHeaders();
     await loadAllData();
   } catch (err) {
     toast('Erreur : ' + err.message, 'error');
@@ -150,6 +151,39 @@ async function appendRow(sheetName, values) {
   } catch (err) {
     handleApiError(err, `ajout dans "${sheetName}"`);
     return false;
+  }
+}
+
+// Vérifie et ajoute le header "Statut" si manquant (col F Charges, col E Revenus)
+async function ensureHeaders() {
+  try {
+    const res = await gapi.client.sheets.spreadsheets.values.batchGet({
+      spreadsheetId: CONFIG.SHEET_ID,
+      ranges: [`${CONFIG.SHEETS.CHARGES}!A1:F1`, `${CONFIG.SHEETS.REVENUS}!A1:E1`]
+    });
+    const chargesHeaders = (res.result.valueRanges?.[0]?.values?.[0]) || [];
+    const revenusHeaders = (res.result.valueRanges?.[1]?.values?.[0]) || [];
+
+    const tasks = [];
+    if (String(chargesHeaders[5] || '').toLowerCase() !== 'statut') {
+      tasks.push(gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: CONFIG.SHEET_ID,
+        range: `${CONFIG.SHEETS.CHARGES}!F1`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [['Statut']] }
+      }));
+    }
+    if (String(revenusHeaders[4] || '').toLowerCase() !== 'statut') {
+      tasks.push(gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: CONFIG.SHEET_ID,
+        range: `${CONFIG.SHEETS.REVENUS}!E1`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [['Statut']] }
+      }));
+    }
+    await Promise.all(tasks);
+  } catch (err) {
+    console.warn('ensureHeaders failed (non bloquant):', err);
   }
 }
 
@@ -394,7 +428,7 @@ function renderCharges() {
         <td class="px-4 py-2"><span class="inline-block bg-rose-100 text-rose-700 text-xs px-2 py-0.5 rounded">${escapeHtml(c.categorie)}</span></td>
         <td class="px-4 py-2 text-right font-semibold text-rose-600">${fmtMoney(c.montant)}</td>
         <td class="px-4 py-2 text-slate-600">${escapeHtml(c.paye_par)}</td>
-        <td class="px-4 py-2">${statutBadge(c.statut)}</td>
+        <td class="px-4 py-2">${statutBadge(c.statut, c._rowIndex, 'charge')}</td>
         <td class="px-4 py-2 text-right">
           <button data-delete-charge="${c._rowIndex}" data-statut="${c.statut}" title="Supprimer cette charge" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
@@ -404,10 +438,17 @@ function renderCharges() {
       </tr>`).join('');
 }
 
-function statutBadge(s) {
-  return s === 'Fixe'
-    ? '<span class="inline-flex items-center gap-1 bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded font-medium" title="Récurrente chaque mois"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>Fixe</span>'
-    : '<span class="inline-block bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded">Variable</span>';
+function statutBadge(s, rowIndex, kind) {
+  // kind: 'charge' ou 'revenu'. Badge cliquable pour basculer Fixe/Variable.
+  const isFixe = s === 'Fixe';
+  const base = 'inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium cursor-pointer transition border';
+  const colors = isFixe
+    ? 'bg-indigo-100 text-indigo-700 border-indigo-200 hover:bg-indigo-200'
+    : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200';
+  const icon = isFixe
+    ? '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>'
+    : '';
+  return `<button data-toggle-${kind}-statut="${rowIndex}" data-current="${s}" title="Cliquer pour basculer Fixe ↔ Variable" class="${base} ${colors}">${icon}${s}</button>`;
 }
 
 // ---------- REVENUS ----------
@@ -429,7 +470,7 @@ function renderRevenus() {
         <td class="px-4 py-2">${escapeHtml(r.libelle)}</td>
         <td class="px-4 py-2 text-right font-semibold text-emerald-600">${fmtMoney(r.montant)}</td>
         <td class="px-4 py-2 text-slate-600">${escapeHtml(r.percu_par)}</td>
-        <td class="px-4 py-2">${statutBadge(r.statut)}</td>
+        <td class="px-4 py-2">${statutBadge(r.statut, r._rowIndex, 'revenu')}</td>
         <td class="px-4 py-2 text-right">
           <button data-delete-revenu="${r._rowIndex}" data-statut="${r.statut}" title="Supprimer ce revenu" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
@@ -643,11 +684,32 @@ document.getElementById('credit-form').addEventListener('submit', async e => {
   }
 });
 
-// Suppressions (délégation)
+// Suppressions et toggle de statut (délégation)
 document.body.addEventListener('click', async e => {
   const charge = e.target.closest('[data-delete-charge]');
   const revenu = e.target.closest('[data-delete-revenu]');
   const credit = e.target.closest('[data-delete-credit]');
+  const toggleCharge = e.target.closest('[data-toggle-charge-statut]');
+  const toggleRevenu = e.target.closest('[data-toggle-revenu-statut]');
+
+  if (toggleCharge) {
+    const rowIndex = +toggleCharge.dataset.toggleChargeStatut;
+    const newStatut = toggleCharge.dataset.current === 'Fixe' ? 'Variable' : 'Fixe';
+    if (await updateCell(CONFIG.SHEETS.CHARGES, rowIndex, 'F', newStatut)) {
+      toast(`Charge marquée : ${newStatut}`, 'success');
+      await loadAllData();
+    }
+    return;
+  }
+  if (toggleRevenu) {
+    const rowIndex = +toggleRevenu.dataset.toggleRevenuStatut;
+    const newStatut = toggleRevenu.dataset.current === 'Fixe' ? 'Variable' : 'Fixe';
+    if (await updateCell(CONFIG.SHEETS.REVENUS, rowIndex, 'E', newStatut)) {
+      toast(`Revenu marqué : ${newStatut}`, 'success');
+      await loadAllData();
+    }
+    return;
+  }
 
   if (charge) {
     const isFixe = charge.dataset.statut === 'Fixe';
