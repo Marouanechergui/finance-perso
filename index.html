@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Finance Perso</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💰</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .fade-in { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+
+  <!-- LOADING -->
+  <div id="loading-view" class="min-h-screen flex items-center justify-center">
+    <div class="text-center">
+      <div class="inline-block w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <p class="mt-4 text-slate-500">Chargement...</p>
+    </div>
+  </div>
+
+  <!-- LOGIN -->
+  <div id="login-view" class="hidden min-h-screen flex items-center justify-center px-4">
+    <div class="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
+      <div class="text-6xl mb-4">💰</div>
+      <h1 class="text-3xl font-bold text-slate-800 mb-2">Finance Perso</h1>
+      <p class="text-slate-500 mb-8">Suivi des charges, revenus et crédit du couple</p>
+      <button id="signin-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-3 transition">
+        <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Se connecter avec Google
+      </button>
+      <p class="text-xs text-slate-400 mt-6">Accès réservé. Seuls les comptes Google autorisés peuvent se connecter.</p>
+    </div>
+  </div>
+
+  <!-- ACCESS DENIED -->
+  <div id="denied-view" class="hidden min-h-screen flex items-center justify-center px-4">
+    <div class="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
+      <div class="text-6xl mb-4">🚫</div>
+      <h1 class="text-2xl font-bold text-slate-800 mb-2">Accès refusé</h1>
+      <p class="text-slate-500 mb-6">Ce compte Google n'est pas autorisé à accéder à cette application.</p>
+      <button id="signout-denied-btn" class="text-indigo-600 hover:underline">Se déconnecter et réessayer</button>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="app-view" class="hidden">
+    <!-- Header -->
+    <header class="bg-white shadow-sm sticky top-0 z-10">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-2xl">💰</span>
+          <h1 class="text-lg font-bold text-slate-800">Finance Perso</h1>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="user-email" class="text-sm text-slate-500 hidden sm:inline"></span>
+          <button id="refresh-btn" title="Rafraîchir" class="p-2 hover:bg-slate-100 rounded-lg">
+            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </button>
+          <button id="signout-btn" title="Se déconnecter" class="p-2 hover:bg-slate-100 rounded-lg">
+            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+          </button>
+        </div>
+      </div>
+      <!-- Tabs -->
+      <nav class="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto">
+        <button data-tab="dashboard" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-indigo-600 text-indigo-600">📊 Dashboard</button>
+        <button data-tab="charges" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-indigo-600">💸 Charges</button>
+        <button data-tab="revenus" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-indigo-600">💵 Revenus</button>
+        <button data-tab="credit" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 hover:text-indigo-600">🏦 Crédit</button>
+      </nav>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 py-6">
+
+      <!-- Month selector -->
+      <div id="month-selector" class="mb-6 flex items-center gap-3">
+        <label class="text-sm font-medium text-slate-600">Mois :</label>
+        <input type="month" id="month-input" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+      </div>
+
+      <!-- ========= DASHBOARD ========= -->
+      <section id="dashboard-view" class="tab-view fade-in">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div class="bg-white rounded-xl shadow p-5">
+            <p class="text-sm text-slate-500 mb-1">Revenus du mois</p>
+            <p class="text-2xl font-bold text-emerald-600" id="card-revenus">— €</p>
+          </div>
+          <div class="bg-white rounded-xl shadow p-5">
+            <p class="text-sm text-slate-500 mb-1">Charges du mois</p>
+            <p class="text-2xl font-bold text-rose-600" id="card-charges">— €</p>
+          </div>
+          <div class="bg-white rounded-xl shadow p-5">
+            <p class="text-sm text-slate-500 mb-1">Épargne du mois</p>
+            <p class="text-2xl font-bold" id="card-epargne">— €</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="bg-white rounded-xl shadow p-5">
+            <h3 class="font-semibold text-slate-700 mb-4">Répartition des charges</h3>
+            <div class="relative h-72">
+              <canvas id="charges-chart"></canvas>
+              <p id="no-charges-msg" class="hidden absolute inset-0 flex items-center justify-center text-slate-400 text-sm">Aucune charge sur ce mois</p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl shadow p-5">
+            <h3 class="font-semibold text-slate-700 mb-1">Crédit restant</h3>
+            <p class="text-3xl font-bold text-indigo-600 mb-1" id="card-credit">— €</p>
+            <p class="text-xs text-slate-400 mb-4" id="card-credit-date">Aucune donnée</p>
+            <h4 class="text-sm font-semibold text-slate-600 mb-2">Derniers mouvements</h4>
+            <ul id="recent-list" class="text-sm divide-y divide-slate-100"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========= CHARGES ========= -->
+      <section id="charges-view" class="tab-view hidden fade-in">
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-semibold text-slate-700 mb-4">Ajouter une charge</h3>
+          <form id="charge-form" class="grid grid-cols-1 md:grid-cols-6 gap-3">
+            <input type="date" name="date" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="text" name="libelle" placeholder="Libellé" required class="md:col-span-2 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="text" name="categorie" list="categories-list" placeholder="Catégorie" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <datalist id="categories-list"></datalist>
+            <input type="number" step="0.01" name="montant" placeholder="Montant €" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="text" name="paye_par" list="users-list" placeholder="Payé par" class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <datalist id="users-list"></datalist>
+            <button type="submit" class="md:col-span-6 bg-rose-600 hover:bg-rose-700 text-white font-semibold py-2 px-4 rounded-lg">Ajouter la charge</button>
+          </form>
+        </div>
+
+        <div class="bg-white rounded-xl shadow overflow-hidden">
+          <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="font-semibold text-slate-700">Charges du mois</h3>
+            <span class="text-sm text-slate-500">Total : <span id="charges-total" class="font-bold text-rose-600">0 €</span></span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-slate-600">
+                <tr>
+                  <th class="text-left px-4 py-2">Date</th>
+                  <th class="text-left px-4 py-2">Libellé</th>
+                  <th class="text-left px-4 py-2">Catégorie</th>
+                  <th class="text-right px-4 py-2">Montant</th>
+                  <th class="text-left px-4 py-2">Payé par</th>
+                  <th class="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody id="charges-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========= REVENUS ========= -->
+      <section id="revenus-view" class="tab-view hidden fade-in">
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-semibold text-slate-700 mb-4">Ajouter un revenu</h3>
+          <form id="revenu-form" class="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <input type="date" name="date" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="text" name="libelle" placeholder="Libellé" required class="md:col-span-2 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="number" step="0.01" name="montant" placeholder="Montant €" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="text" name="percu_par" list="users-list" placeholder="Perçu par" class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <button type="submit" class="md:col-span-5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg">Ajouter le revenu</button>
+          </form>
+        </div>
+
+        <div class="bg-white rounded-xl shadow overflow-hidden">
+          <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="font-semibold text-slate-700">Revenus du mois</h3>
+            <span class="text-sm text-slate-500">Total : <span id="revenus-total" class="font-bold text-emerald-600">0 €</span></span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-slate-600">
+                <tr>
+                  <th class="text-left px-4 py-2">Date</th>
+                  <th class="text-left px-4 py-2">Libellé</th>
+                  <th class="text-right px-4 py-2">Montant</th>
+                  <th class="text-left px-4 py-2">Perçu par</th>
+                  <th class="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody id="revenus-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========= CREDIT ========= -->
+      <section id="credit-view" class="tab-view hidden fade-in">
+        <div class="bg-gradient-to-br from-indigo-600 to-purple-600 text-white rounded-xl shadow p-6 mb-6">
+          <p class="text-indigo-100 text-sm mb-1">Montant restant</p>
+          <p class="text-4xl font-bold mb-2" id="credit-current">— €</p>
+          <p class="text-indigo-100 text-sm" id="credit-current-date">Aucune donnée</p>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-semibold text-slate-700 mb-4">Ajouter un remboursement</h3>
+          <form id="credit-form" class="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <input type="date" name="date" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="number" step="0.01" name="rembourse" placeholder="Remboursé €" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="number" step="0.01" name="restant" placeholder="Reste à devoir €" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input type="text" name="commentaire" placeholder="Commentaire (optionnel)" class="md:col-span-2 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <button type="submit" class="md:col-span-5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg">Ajouter</button>
+          </form>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-5 mb-6">
+          <h3 class="font-semibold text-slate-700 mb-4">Évolution du crédit</h3>
+          <div class="relative h-64">
+            <canvas id="credit-chart"></canvas>
+            <p id="no-credit-msg" class="hidden absolute inset-0 flex items-center justify-center text-slate-400 text-sm">Aucun remboursement enregistré</p>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow overflow-hidden">
+          <div class="p-5 border-b border-slate-100">
+            <h3 class="font-semibold text-slate-700">Historique des remboursements</h3>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-slate-600">
+                <tr>
+                  <th class="text-left px-4 py-2">Date</th>
+                  <th class="text-right px-4 py-2">Remboursé</th>
+                  <th class="text-right px-4 py-2">Restant</th>
+                  <th class="text-left px-4 py-2">Commentaire</th>
+                  <th class="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody id="credit-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Toast -->
+    <div id="toast" class="hidden fixed bottom-6 right-6 bg-slate-800 text-white px-4 py-3 rounded-lg shadow-lg text-sm z-50"></div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
