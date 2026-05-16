@@ -629,43 +629,67 @@ document.getElementById('revenu-form').addEventListener('submit', async e => {
   }
 });
 
-// Bouton "Modifier le montant total initial" du crédit
-document.getElementById('credit-edit-initial').addEventListener('click', async e => {
-  const btn = e.currentTarget;
-  const rowIndex = btn.dataset.rowIndex;
-  const current = btn.dataset.currentValue;
+// Édition inline du montant total initial du crédit
+(function setupCreditEdit() {
+  const editBtn = document.getElementById('credit-edit-initial');
+  const viewEl = document.getElementById('credit-initial-view');
+  const editEl = document.getElementById('credit-initial-edit');
+  const inputEl = document.getElementById('credit-initial-input');
+  const saveBtn = document.getElementById('credit-initial-save');
+  const cancelBtn = document.getElementById('credit-initial-cancel');
 
-  // Cas 1 : aucune entrée crédit existante → on crée la première (solde initial)
-  if (rowIndex === undefined) {
-    const newValue = prompt('Montant total initial de ton crédit (en €) :\n\nExemple : 145000');
-    if (newValue === null) return;
-    const parsed = parseFloat(String(newValue).replace(',', '.'));
+  function enterEditMode() {
+    inputEl.value = editBtn.dataset.currentValue || '';
+    viewEl.classList.add('hidden');
+    editEl.classList.remove('hidden');
+    editBtn.classList.add('hidden');
+    inputEl.focus();
+    inputEl.select();
+  }
+
+  function exitEditMode() {
+    editEl.classList.add('hidden');
+    viewEl.classList.remove('hidden');
+    editBtn.classList.remove('hidden');
+  }
+
+  async function saveValue() {
+    const raw = String(inputEl.value || '').replace(',', '.').trim();
+    const parsed = parseFloat(raw);
     if (isNaN(parsed) || parsed < 0) {
-      toast('Montant invalide', 'error');
+      toast('Montant invalide. Entre un nombre positif (ex: 145000).', 'error');
+      inputEl.focus();
       return;
     }
-    const today = new Date().toISOString().slice(0, 10);
-    if (await appendRow(CONFIG.SHEETS.CREDIT, [today, 0, parsed, 'Solde initial'])) {
-      toast('Crédit initialisé ✓', 'success');
+    const rowIndex = editBtn.dataset.rowIndex;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Enregistrement...';
+    let ok = false;
+    if (rowIndex === undefined || rowIndex === '') {
+      // Aucune entrée → on crée la première
+      const today = new Date().toISOString().slice(0, 10);
+      ok = await appendRow(CONFIG.SHEETS.CREDIT, [today, 0, parsed, 'Solde initial']);
+    } else {
+      // Entrée existante → on met à jour la colonne C (Montant restant)
+      ok = await updateCell(CONFIG.SHEETS.CREDIT, +rowIndex, 'C', parsed);
+    }
+    saveBtn.disabled = false;
+    saveBtn.textContent = '✓ Enregistrer';
+    if (ok) {
+      toast('Montant total mis à jour ✓', 'success');
+      exitEditMode();
       await loadAllData();
     }
-    return;
   }
 
-  // Cas 2 : une entrée existe → on modifie son montant
-  const newValue = prompt(`Nouveau montant total initial du crédit (en €) :\n\nValeur actuelle : ${current} €`, current);
-  if (newValue === null) return;
-  const parsed = parseFloat(String(newValue).replace(',', '.'));
-  if (isNaN(parsed) || parsed < 0) {
-    toast('Montant invalide', 'error');
-    return;
-  }
-  // Colonne C = "Montant restant" dans l'onglet Credit
-  if (await updateCell(CONFIG.SHEETS.CREDIT, +rowIndex, 'C', parsed)) {
-    toast('Montant total mis à jour ✓', 'success');
-    await loadAllData();
-  }
-});
+  editBtn.addEventListener('click', enterEditMode);
+  cancelBtn.addEventListener('click', exitEditMode);
+  saveBtn.addEventListener('click', saveValue);
+  inputEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); saveValue(); }
+    if (e.key === 'Escape') { e.preventDefault(); exitEditMode(); }
+  });
+})();
 
 // Formulaire Crédit
 document.getElementById('credit-form').addEventListener('submit', async e => {
