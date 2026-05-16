@@ -358,7 +358,10 @@ function renderCharges() {
         <td class="px-4 py-2 text-right font-semibold text-rose-600">${fmtMoney(c.montant)}</td>
         <td class="px-4 py-2 text-slate-600">${escapeHtml(c.paye_par)}</td>
         <td class="px-4 py-2 text-right">
-          <button data-delete-charge="${c._rowIndex}" class="text-slate-400 hover:text-rose-600 text-xs">🗑️</button>
+          <button data-delete-charge="${c._rowIndex}" title="Supprimer cette charge" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            <span class="text-xs font-medium hidden sm:inline">Supprimer</span>
+          </button>
         </td>
       </tr>`).join('');
 }
@@ -383,7 +386,10 @@ function renderRevenus() {
         <td class="px-4 py-2 text-right font-semibold text-emerald-600">${fmtMoney(r.montant)}</td>
         <td class="px-4 py-2 text-slate-600">${escapeHtml(r.percu_par)}</td>
         <td class="px-4 py-2 text-right">
-          <button data-delete-revenu="${r._rowIndex}" class="text-slate-400 hover:text-rose-600 text-xs">🗑️</button>
+          <button data-delete-revenu="${r._rowIndex}" title="Supprimer ce revenu" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            <span class="text-xs font-medium hidden sm:inline">Supprimer</span>
+          </button>
         </td>
       </tr>`).join('');
 }
@@ -408,7 +414,10 @@ function renderCredit() {
         <td class="px-4 py-2 text-right text-indigo-600 font-bold">${fmtMoney(c.restant)}</td>
         <td class="px-4 py-2 text-slate-600">${escapeHtml(c.commentaire)}</td>
         <td class="px-4 py-2 text-right">
-          <button data-delete-credit="${c._rowIndex}" class="text-slate-400 hover:text-rose-600 text-xs">🗑️</button>
+          <button data-delete-credit="${c._rowIndex}" title="Supprimer cette entrée" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            <span class="text-xs font-medium hidden sm:inline">Supprimer</span>
+          </button>
         </td>
       </tr>`).join('');
 
