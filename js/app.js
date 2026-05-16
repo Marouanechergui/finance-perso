@@ -452,17 +452,17 @@ function renderCredit() {
 
   // Montant total initial (1ère entrée chronologiquement)
   document.getElementById('credit-initial').textContent = first ? fmtMoney(first.restant) : '— €';
-  document.getElementById('credit-initial-date').textContent = first ? `Solde de départ au ${fmtDate(first.date)}` : 'Aucune donnée';
-  // On stocke l'index de ligne pour le bouton modifier
+  document.getElementById('credit-initial-date').textContent = first
+    ? `Solde de départ au ${fmtDate(first.date)}`
+    : 'Cliquer ✏️ pour initialiser';
+  // Le bouton est toujours actif : si une entrée existe il modifie, sinon il crée
   const editBtn = document.getElementById('credit-edit-initial');
   if (first) {
     editBtn.dataset.rowIndex = first._rowIndex;
     editBtn.dataset.currentValue = first.restant;
-    editBtn.disabled = false;
-    editBtn.classList.remove('opacity-50', 'cursor-not-allowed');
   } else {
-    editBtn.disabled = true;
-    editBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    delete editBtn.dataset.rowIndex;
+    delete editBtn.dataset.currentValue;
   }
 
   const tbody = document.getElementById('credit-tbody');
@@ -593,10 +593,25 @@ document.getElementById('credit-edit-initial').addEventListener('click', async e
   const btn = e.currentTarget;
   const rowIndex = btn.dataset.rowIndex;
   const current = btn.dataset.currentValue;
+
+  // Cas 1 : aucune entrée crédit existante → on crée la première (solde initial)
   if (rowIndex === undefined) {
-    toast('Crée d\'abord une première entrée (solde initial)', 'error');
+    const newValue = prompt('Montant total initial de ton crédit (en €) :\n\nExemple : 145000');
+    if (newValue === null) return;
+    const parsed = parseFloat(String(newValue).replace(',', '.'));
+    if (isNaN(parsed) || parsed < 0) {
+      toast('Montant invalide', 'error');
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    if (await appendRow(CONFIG.SHEETS.CREDIT, [today, 0, parsed, 'Solde initial'])) {
+      toast('Crédit initialisé ✓', 'success');
+      await loadAllData();
+    }
     return;
   }
+
+  // Cas 2 : une entrée existe → on modifie son montant
   const newValue = prompt(`Nouveau montant total initial du crédit (en €) :\n\nValeur actuelle : ${current} €`, current);
   if (newValue === null) return;
   const parsed = parseFloat(String(newValue).replace(',', '.'));
