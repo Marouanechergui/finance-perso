@@ -123,7 +123,7 @@
       <section id="charges-view" class="tab-view hidden fade-in">
         <div class="bg-white rounded-xl shadow p-5 mb-6">
           <h3 class="font-semibold text-slate-700 mb-4">Ajouter une charge</h3>
-          <form id="charge-form" class="grid grid-cols-1 md:grid-cols-6 gap-3">
+          <form id="charge-form" class="grid grid-cols-1 md:grid-cols-7 gap-3">
             <input type="date" name="date" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
             <input type="text" name="libelle" placeholder="Libellé" required class="md:col-span-2 border border-slate-300 rounded-lg px-3 py-2 text-sm">
             <input type="text" name="categorie" list="categories-list" placeholder="Catégorie" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
@@ -131,8 +131,13 @@
             <input type="number" step="0.01" name="montant" placeholder="Montant €" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
             <input type="text" name="paye_par" list="users-list" placeholder="Payé par" class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
             <datalist id="users-list"></datalist>
-            <button type="submit" class="md:col-span-6 bg-rose-600 hover:bg-rose-700 text-white font-semibold py-2 px-4 rounded-lg">Ajouter la charge</button>
+            <select name="statut" class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white" title="Variable = ponctuelle. Fixe = récurrente chaque mois.">
+              <option value="Variable">Variable</option>
+              <option value="Fixe">Fixe (mensuelle)</option>
+            </select>
+            <button type="submit" class="md:col-span-7 bg-rose-600 hover:bg-rose-700 text-white font-semibold py-2 px-4 rounded-lg">Ajouter la charge</button>
           </form>
+          <p class="text-xs text-slate-500 mt-3">💡 <b>Fixe</b> = la charge se répète chaque mois à partir de la date saisie (loyer, abonnements...). <b>Variable</b> = une seule fois sur ce mois (courses, essence...).</p>
         </div>
 
         <div class="bg-white rounded-xl shadow overflow-hidden">
@@ -149,6 +154,7 @@
                   <th class="text-left px-4 py-2">Catégorie</th>
                   <th class="text-right px-4 py-2">Montant</th>
                   <th class="text-left px-4 py-2">Payé par</th>
+                  <th class="text-left px-4 py-2">Statut</th>
                   <th class="px-4 py-2"></th>
                 </tr>
               </thead>
@@ -162,13 +168,18 @@
       <section id="revenus-view" class="tab-view hidden fade-in">
         <div class="bg-white rounded-xl shadow p-5 mb-6">
           <h3 class="font-semibold text-slate-700 mb-4">Ajouter un revenu</h3>
-          <form id="revenu-form" class="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <form id="revenu-form" class="grid grid-cols-1 md:grid-cols-6 gap-3">
             <input type="date" name="date" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
             <input type="text" name="libelle" placeholder="Libellé" required class="md:col-span-2 border border-slate-300 rounded-lg px-3 py-2 text-sm">
             <input type="number" step="0.01" name="montant" placeholder="Montant €" required class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
             <input type="text" name="percu_par" list="users-list" placeholder="Perçu par" class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
-            <button type="submit" class="md:col-span-5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg">Ajouter le revenu</button>
+            <select name="statut" class="md:col-span-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white" title="Variable = ponctuel. Fixe = récurrent chaque mois.">
+              <option value="Variable">Variable</option>
+              <option value="Fixe">Fixe (mensuel)</option>
+            </select>
+            <button type="submit" class="md:col-span-6 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg">Ajouter le revenu</button>
           </form>
+          <p class="text-xs text-slate-500 mt-3">💡 <b>Fixe</b> = revenu mensuel récurrent (salaire). <b>Variable</b> = revenu ponctuel (prime, vente, etc.).</p>
         </div>
 
         <div class="bg-white rounded-xl shadow overflow-hidden">
@@ -184,6 +195,7 @@
                   <th class="text-left px-4 py-2">Libellé</th>
                   <th class="text-right px-4 py-2">Montant</th>
                   <th class="text-left px-4 py-2">Perçu par</th>
+                  <th class="text-left px-4 py-2">Statut</th>
                   <th class="px-4 py-2"></th>
                 </tr>
               </thead>
@@ -195,10 +207,22 @@
 
       <!-- ========= CREDIT ========= -->
       <section id="credit-view" class="tab-view hidden fade-in">
-        <div class="bg-gradient-to-br from-indigo-600 to-purple-600 text-white rounded-xl shadow p-6 mb-6">
-          <p class="text-indigo-100 text-sm mb-1">Montant restant</p>
-          <p class="text-4xl font-bold mb-2" id="credit-current">— €</p>
-          <p class="text-indigo-100 text-sm" id="credit-current-date">Aucune donnée</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div class="bg-gradient-to-br from-slate-700 to-slate-900 text-white rounded-xl shadow p-6">
+            <div class="flex items-start justify-between mb-1">
+              <p class="text-slate-300 text-sm">Montant total initial</p>
+              <button id="credit-edit-initial" title="Modifier le montant total" class="text-slate-300 hover:text-white hover:bg-white/10 p-1 rounded transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              </button>
+            </div>
+            <p class="text-3xl font-bold mb-2" id="credit-initial">— €</p>
+            <p class="text-slate-300 text-xs" id="credit-initial-date">Aucune donnée</p>
+          </div>
+          <div class="bg-gradient-to-br from-indigo-600 to-purple-600 text-white rounded-xl shadow p-6">
+            <p class="text-indigo-100 text-sm mb-1">Montant restant</p>
+            <p class="text-3xl font-bold mb-2" id="credit-current">— €</p>
+            <p class="text-indigo-100 text-xs" id="credit-current-date">Aucune donnée</p>
+          </div>
         </div>
 
         <div class="bg-white rounded-xl shadow p-5 mb-6">

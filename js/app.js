@@ -153,6 +153,22 @@ async function appendRow(sheetName, values) {
   }
 }
 
+async function updateCell(sheetName, rowIndex, colLetter, value) {
+  // rowIndex 0-based dans state (ligne réelle = rowIndex + 2 car entête en ligne 1)
+  try {
+    await gapi.client.sheets.spreadsheets.values.update({
+      spreadsheetId: CONFIG.SHEET_ID,
+      range: `${sheetName}!${colLetter}${rowIndex + 2}`,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [[value]] }
+    });
+    return true;
+  } catch (err) {
+    handleApiError(err, `mise à jour cellule ${colLetter}${rowIndex + 2}`);
+    return false;
+  }
+}
+
 async function deleteRow(sheetName, rowIndex) {
   // rowIndex = index 0-based dans state.<sheet>, donc ligne réelle = rowIndex + 2 (entête en ligne 1)
   try {
@@ -214,7 +230,8 @@ async function loadAllData() {
     libelle: r[1] || '',
     categorie: r[2] || '',
     montant: parseFloat(r[3]) || 0,
-    paye_par: r[4] || ''
+    paye_par: r[4] || '',
+    statut: normalizeStatut(r[5])
   }));
 
   state.revenus = revenus.map((r, i) => ({
@@ -222,7 +239,8 @@ async function loadAllData() {
     date: r[0] || '',
     libelle: r[1] || '',
     montant: parseFloat(r[2]) || 0,
-    percu_par: r[3] || ''
+    percu_par: r[3] || '',
+    statut: normalizeStatut(r[4])
   }));
 
   state.credit = credit.map((r, i) => ({
@@ -234,6 +252,25 @@ async function loadAllData() {
   }));
 
   renderAll();
+}
+
+// ------------------------------------------------------------
+//  HELPERS MÉTIER
+// ------------------------------------------------------------
+
+function normalizeStatut(s) {
+  return String(s || '').trim().toLowerCase() === 'fixe' ? 'Fixe' : 'Variable';
+}
+
+// Une entrée apparaît dans le mois "month" (YYYY-MM) si :
+//   - statut = Variable et date dans ce mois (ancien comportement)
+//   - statut = Fixe   et date <= dernier jour de ce mois (récurrent à partir de sa date)
+function isInMonth(entry, month) {
+  if (!entry.date) return false;
+  if (entry.statut === 'Fixe') {
+    return entry.date.slice(0, 7) <= month;
+  }
+  return entry.date.startsWith(month);
 }
 
 // ------------------------------------------------------------
@@ -264,8 +301,8 @@ function refreshDatalists() {
 // ---------- DASHBOARD ----------
 
 function renderDashboard() {
-  const chargesMois = state.charges.filter(c => c.date.startsWith(state.month));
-  const revenusMois = state.revenus.filter(r => r.date.startsWith(state.month));
+  const chargesMois = state.charges.filter(c => isInMonth(c, state.month));
+  const revenusMois = state.revenus.filter(r => isInMonth(r, state.month));
 
   const totalCharges = chargesMois.reduce((s, c) => s + c.montant, 0);
   const totalRevenus = revenusMois.reduce((s, r) => s + r.montant, 0);
@@ -341,15 +378,15 @@ function renderDashboard() {
 
 function renderCharges() {
   const chargesMois = state.charges
-    .filter(c => c.date.startsWith(state.month))
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .filter(c => isInMonth(c, state.month))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   const total = chargesMois.reduce((s, c) => s + c.montant, 0);
   document.getElementById('charges-total').textContent = fmtMoney(total);
 
   const tbody = document.getElementById('charges-tbody');
   tbody.innerHTML = chargesMois.length === 0
-    ? `<tr><td colspan="6" class="text-center py-6 text-slate-400">Aucune charge sur ce mois</td></tr>`
+    ? `<tr><td colspan="7" class="text-center py-6 text-slate-400">Aucune charge sur ce mois</td></tr>`
     : chargesMois.map(c => `
       <tr class="hover:bg-slate-50">
         <td class="px-4 py-2 text-slate-600">${fmtDate(c.date)}</td>
@@ -357,8 +394,9 @@ function renderCharges() {
         <td class="px-4 py-2"><span class="inline-block bg-rose-100 text-rose-700 text-xs px-2 py-0.5 rounded">${escapeHtml(c.categorie)}</span></td>
         <td class="px-4 py-2 text-right font-semibold text-rose-600">${fmtMoney(c.montant)}</td>
         <td class="px-4 py-2 text-slate-600">${escapeHtml(c.paye_par)}</td>
+        <td class="px-4 py-2">${statutBadge(c.statut)}</td>
         <td class="px-4 py-2 text-right">
-          <button data-delete-charge="${c._rowIndex}" title="Supprimer cette charge" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
+          <button data-delete-charge="${c._rowIndex}" data-statut="${c.statut}" title="Supprimer cette charge" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
             <span class="text-xs font-medium hidden sm:inline">Supprimer</span>
           </button>
@@ -366,27 +404,34 @@ function renderCharges() {
       </tr>`).join('');
 }
 
+function statutBadge(s) {
+  return s === 'Fixe'
+    ? '<span class="inline-flex items-center gap-1 bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded font-medium" title="Récurrente chaque mois"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>Fixe</span>'
+    : '<span class="inline-block bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded">Variable</span>';
+}
+
 // ---------- REVENUS ----------
 
 function renderRevenus() {
   const revenusMois = state.revenus
-    .filter(r => r.date.startsWith(state.month))
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .filter(r => isInMonth(r, state.month))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   const total = revenusMois.reduce((s, r) => s + r.montant, 0);
   document.getElementById('revenus-total').textContent = fmtMoney(total);
 
   const tbody = document.getElementById('revenus-tbody');
   tbody.innerHTML = revenusMois.length === 0
-    ? `<tr><td colspan="5" class="text-center py-6 text-slate-400">Aucun revenu sur ce mois</td></tr>`
+    ? `<tr><td colspan="6" class="text-center py-6 text-slate-400">Aucun revenu sur ce mois</td></tr>`
     : revenusMois.map(r => `
       <tr class="hover:bg-slate-50">
         <td class="px-4 py-2 text-slate-600">${fmtDate(r.date)}</td>
         <td class="px-4 py-2">${escapeHtml(r.libelle)}</td>
         <td class="px-4 py-2 text-right font-semibold text-emerald-600">${fmtMoney(r.montant)}</td>
         <td class="px-4 py-2 text-slate-600">${escapeHtml(r.percu_par)}</td>
+        <td class="px-4 py-2">${statutBadge(r.statut)}</td>
         <td class="px-4 py-2 text-right">
-          <button data-delete-revenu="${r._rowIndex}" title="Supprimer ce revenu" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
+          <button data-delete-revenu="${r._rowIndex}" data-statut="${r.statut}" title="Supprimer ce revenu" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
             <span class="text-xs font-medium hidden sm:inline">Supprimer</span>
           </button>
@@ -398,10 +443,27 @@ function renderRevenus() {
 
 function renderCredit() {
   const sorted = [...state.credit].sort((a, b) => a.date.localeCompare(b.date));
+  const first = sorted.length ? sorted[0] : null;
   const last = sorted.length ? sorted[sorted.length - 1] : null;
 
+  // Reste actuel (dernière entrée)
   document.getElementById('credit-current').textContent = last ? fmtMoney(last.restant) : '— €';
   document.getElementById('credit-current-date').textContent = last ? `Dernière maj : ${fmtDate(last.date)}` : 'Aucune donnée';
+
+  // Montant total initial (1ère entrée chronologiquement)
+  document.getElementById('credit-initial').textContent = first ? fmtMoney(first.restant) : '— €';
+  document.getElementById('credit-initial-date').textContent = first ? `Solde de départ au ${fmtDate(first.date)}` : 'Aucune donnée';
+  // On stocke l'index de ligne pour le bouton modifier
+  const editBtn = document.getElementById('credit-edit-initial');
+  if (first) {
+    editBtn.dataset.rowIndex = first._rowIndex;
+    editBtn.dataset.currentValue = first.restant;
+    editBtn.disabled = false;
+    editBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+  } else {
+    editBtn.disabled = true;
+    editBtn.classList.add('opacity-50', 'cursor-not-allowed');
+  }
 
   const tbody = document.getElementById('credit-tbody');
   const displaySorted = [...state.credit].sort((a, b) => b.date.localeCompare(a.date));
@@ -498,7 +560,8 @@ document.getElementById('charge-form').addEventListener('submit', async e => {
     fd.get('libelle'),
     fd.get('categorie'),
     fd.get('montant'),
-    fd.get('paye_par') || ''
+    fd.get('paye_par') || '',
+    fd.get('statut') || 'Variable'
   ]);
   if (ok) {
     e.target.reset();
@@ -515,11 +578,35 @@ document.getElementById('revenu-form').addEventListener('submit', async e => {
     fd.get('date'),
     fd.get('libelle'),
     fd.get('montant'),
-    fd.get('percu_par') || ''
+    fd.get('percu_par') || '',
+    fd.get('statut') || 'Variable'
   ]);
   if (ok) {
     e.target.reset();
     toast('Revenu ajouté ✓', 'success');
+    await loadAllData();
+  }
+});
+
+// Bouton "Modifier le montant total initial" du crédit
+document.getElementById('credit-edit-initial').addEventListener('click', async e => {
+  const btn = e.currentTarget;
+  const rowIndex = btn.dataset.rowIndex;
+  const current = btn.dataset.currentValue;
+  if (rowIndex === undefined) {
+    toast('Crée d\'abord une première entrée (solde initial)', 'error');
+    return;
+  }
+  const newValue = prompt(`Nouveau montant total initial du crédit (en €) :\n\nValeur actuelle : ${current} €`, current);
+  if (newValue === null) return;
+  const parsed = parseFloat(String(newValue).replace(',', '.'));
+  if (isNaN(parsed) || parsed < 0) {
+    toast('Montant invalide', 'error');
+    return;
+  }
+  // Colonne C = "Montant restant" dans l'onglet Credit
+  if (await updateCell(CONFIG.SHEETS.CREDIT, +rowIndex, 'C', parsed)) {
+    toast('Montant total mis à jour ✓', 'success');
     await loadAllData();
   }
 });
@@ -548,13 +635,21 @@ document.body.addEventListener('click', async e => {
   const credit = e.target.closest('[data-delete-credit]');
 
   if (charge) {
-    if (!confirm('Supprimer cette charge ?')) return;
+    const isFixe = charge.dataset.statut === 'Fixe';
+    const msg = isFixe
+      ? '⚠️ Cette charge est FIXE (récurrente).\nLa supprimer la retirera de TOUS les mois (passés et futurs).\n\nContinuer ?'
+      : 'Supprimer cette charge ?';
+    if (!confirm(msg)) return;
     if (await deleteRow(CONFIG.SHEETS.CHARGES, +charge.dataset.deleteCharge)) {
       toast('Charge supprimée', 'success');
       await loadAllData();
     }
   } else if (revenu) {
-    if (!confirm('Supprimer ce revenu ?')) return;
+    const isFixe = revenu.dataset.statut === 'Fixe';
+    const msg = isFixe
+      ? '⚠️ Ce revenu est FIXE (récurrent).\nLe supprimer le retirera de TOUS les mois (passés et futurs).\n\nContinuer ?'
+      : 'Supprimer ce revenu ?';
+    if (!confirm(msg)) return;
     if (await deleteRow(CONFIG.SHEETS.REVENUS, +revenu.dataset.deleteRevenu)) {
       toast('Revenu supprimé', 'success');
       await loadAllData();
