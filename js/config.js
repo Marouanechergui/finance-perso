@@ -20,7 +20,9 @@ const CONFIG = {
   ALLOWED_EMAILS: [],
 
   // ⬇️ Ne pas modifier en dessous
-  SCOPES: 'https://www.googleapis.com/auth/spreadsheets',
+  // openid+email+profile : nécessaires pour lire l'email de l'utilisateur (allowlist + avatar)
+  // spreadsheets : accès à ta Google Sheet
+  SCOPES: 'openid email profile https://www.googleapis.com/auth/spreadsheets',
   DISCOVERY_DOC: 'https://sheets.googleapis.com/$discovery/rest?version=v4',
   SHEETS: {
     CHARGES: 'Charges',
