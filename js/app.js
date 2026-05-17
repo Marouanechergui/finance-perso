@@ -1,5 +1,5 @@
 // ============================================================
-//  Finance Perso — Application principale
+//  Finance Perso — Application
 // ============================================================
 
 const state = {
@@ -11,7 +11,16 @@ const state = {
   view: 'dashboard',
   month: new Date().toISOString().slice(0, 7), // YYYY-MM
   chargesChart: null,
-  creditChart: null
+  creditChart: null,
+  forecastChart: null
+};
+
+const PAGE_META = {
+  dashboard:  { title: 'Dashboard',  subtitle: 'Vue d\'ensemble de vos finances',  showMonth: true  },
+  charges:    { title: 'Charges',    subtitle: 'Suivi des dépenses du mois',       showMonth: true  },
+  revenus:    { title: 'Revenus',    subtitle: 'Suivi des entrées d\'argent',      showMonth: true  },
+  credit:     { title: 'Crédit',     subtitle: 'Suivi du remboursement',            showMonth: false },
+  previsions: { title: 'Prévisions', subtitle: 'Projection de l\'épargne future',  showMonth: false }
 };
 
 let tokenClient = null;
@@ -19,13 +28,10 @@ let gapiInited = false;
 let gisInited = false;
 
 // ------------------------------------------------------------
-//  INITIALISATION
+//  INIT
 // ------------------------------------------------------------
 
-window.addEventListener('load', () => {
-  // Attendre que les SDK Google soient chargés
-  waitForGoogle();
-});
+window.addEventListener('load', waitForGoogle);
 
 function waitForGoogle() {
   if (typeof gapi !== 'undefined' && typeof google !== 'undefined' && google.accounts) {
@@ -62,15 +68,16 @@ function maybeShowLogin() {
 }
 
 // ------------------------------------------------------------
-//  AUTHENTIFICATION
+//  AUTH
 // ------------------------------------------------------------
 
 document.getElementById('signin-btn').addEventListener('click', () => {
   tokenClient.requestAccessToken({ prompt: 'consent' });
 });
 
-document.getElementById('signout-btn').addEventListener('click', signout);
-document.getElementById('signout-denied-btn').addEventListener('click', signout);
+['signout-btn', 'signout-btn-mobile', 'signout-denied-btn'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', signout);
+});
 
 async function handleAuthResponse(resp) {
   if (resp.error) {
@@ -80,7 +87,6 @@ async function handleAuthResponse(resp) {
   state.token = resp.access_token;
   gapi.client.setToken({ access_token: resp.access_token });
 
-  // Récupérer l'email de l'utilisateur
   try {
     const userInfo = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: 'Bearer ' + resp.access_token }
@@ -88,7 +94,6 @@ async function handleAuthResponse(resp) {
 
     state.user = userInfo.email;
 
-    // Vérifier la whitelist (uniquement si elle est non vide)
     if (CONFIG.ALLOWED_EMAILS.length > 0) {
       const allowed = CONFIG.ALLOWED_EMAILS.map(e => e.toLowerCase());
       if (!allowed.includes(userInfo.email.toLowerCase())) {
@@ -99,9 +104,11 @@ async function handleAuthResponse(resp) {
     }
 
     document.getElementById('user-email').textContent = userInfo.email;
+    document.getElementById('user-avatar').textContent = (userInfo.email[0] || '?').toUpperCase();
     hide('login-view');
     show('app-view');
-    document.getElementById('month-input').value = state.month;
+    syncMonthInputs(state.month);
+    document.getElementById('forecast-target').value = addMonthsToYearMonth(state.month, 12);
     await ensureHeaders();
     await loadAllData();
   } catch (err) {
@@ -110,9 +117,7 @@ async function handleAuthResponse(resp) {
 }
 
 function signout() {
-  if (state.token) {
-    google.accounts.oauth2.revoke(state.token, () => {});
-  }
+  if (state.token) google.accounts.oauth2.revoke(state.token, () => {});
   state.token = null;
   state.user = null;
   gapi.client.setToken(null);
@@ -133,7 +138,7 @@ async function readSheet(sheetName) {
     });
     return res.result.values || [];
   } catch (err) {
-    handleApiError(err, `lecture de l'onglet "${sheetName}"`);
+    handleApiError(err, `lecture "${sheetName}"`);
     return [];
   }
 }
@@ -154,18 +159,17 @@ async function appendRow(sheetName, values) {
   }
 }
 
-// Vérifie et ajoute le header "Statut" si manquant (col F Charges, col E Revenus)
 async function ensureHeaders() {
   try {
     const res = await gapi.client.sheets.spreadsheets.values.batchGet({
       spreadsheetId: CONFIG.SHEET_ID,
       ranges: [`${CONFIG.SHEETS.CHARGES}!A1:F1`, `${CONFIG.SHEETS.REVENUS}!A1:E1`]
     });
-    const chargesHeaders = (res.result.valueRanges?.[0]?.values?.[0]) || [];
-    const revenusHeaders = (res.result.valueRanges?.[1]?.values?.[0]) || [];
+    const chargesH = (res.result.valueRanges?.[0]?.values?.[0]) || [];
+    const revenusH = (res.result.valueRanges?.[1]?.values?.[0]) || [];
 
     const tasks = [];
-    if (String(chargesHeaders[5] || '').toLowerCase() !== 'statut') {
+    if (String(chargesH[5] || '').toLowerCase() !== 'statut') {
       tasks.push(gapi.client.sheets.spreadsheets.values.update({
         spreadsheetId: CONFIG.SHEET_ID,
         range: `${CONFIG.SHEETS.CHARGES}!F1`,
@@ -173,7 +177,7 @@ async function ensureHeaders() {
         resource: { values: [['Statut']] }
       }));
     }
-    if (String(revenusHeaders[4] || '').toLowerCase() !== 'statut') {
+    if (String(revenusH[4] || '').toLowerCase() !== 'statut') {
       tasks.push(gapi.client.sheets.spreadsheets.values.update({
         spreadsheetId: CONFIG.SHEET_ID,
         range: `${CONFIG.SHEETS.REVENUS}!E1`,
@@ -188,7 +192,6 @@ async function ensureHeaders() {
 }
 
 async function updateCell(sheetName, rowIndex, colLetter, value) {
-  // rowIndex 0-based dans state (ligne réelle = rowIndex + 2 car entête en ligne 1)
   try {
     await gapi.client.sheets.spreadsheets.values.update({
       spreadsheetId: CONFIG.SHEET_ID,
@@ -198,13 +201,12 @@ async function updateCell(sheetName, rowIndex, colLetter, value) {
     });
     return true;
   } catch (err) {
-    handleApiError(err, `mise à jour cellule ${colLetter}${rowIndex + 2}`);
+    handleApiError(err, `update ${colLetter}${rowIndex + 2}`);
     return false;
   }
 }
 
 async function deleteRow(sheetName, rowIndex) {
-  // rowIndex = index 0-based dans state.<sheet>, donc ligne réelle = rowIndex + 2 (entête en ligne 1)
   try {
     const meta = await gapi.client.sheets.spreadsheets.get({ spreadsheetId: CONFIG.SHEET_ID });
     const sheet = meta.result.sheets.find(s => s.properties.title === sheetName);
@@ -227,7 +229,7 @@ async function deleteRow(sheetName, rowIndex) {
     });
     return true;
   } catch (err) {
-    handleApiError(err, 'suppression de la ligne');
+    handleApiError(err, 'suppression');
     return false;
   }
 }
@@ -235,21 +237,19 @@ async function deleteRow(sheetName, rowIndex) {
 function handleApiError(err, context) {
   console.error(err);
   const msg = err.result?.error?.message || err.message || 'Erreur inconnue';
-  if (msg.includes('403') || err.status === 403) {
-    toast(`Accès refusé à la Sheet. Vérifie qu'elle est partagée avec ton compte.`, 'error');
-  } else if (msg.includes('404') || err.status === 404) {
-    toast(`Sheet ou onglet introuvable. Vérifie le SHEET_ID et le nom des onglets.`, 'error');
-  } else if (err.status === 401) {
-    toast('Session expirée, reconnecte-toi.', 'error');
-    signout();
-  } else {
-    toast(`Erreur (${context}) : ${msg}`, 'error');
-  }
+  if (msg.includes('403') || err.status === 403)      toast('Accès refusé à la Sheet.', 'error');
+  else if (msg.includes('404') || err.status === 404) toast('Sheet ou onglet introuvable.', 'error');
+  else if (err.status === 401)                        { toast('Session expirée.', 'error'); signout(); }
+  else                                                 toast(`Erreur (${context}) : ${msg}`, 'error');
 }
 
 // ------------------------------------------------------------
-//  CHARGEMENT DES DONNÉES
+//  LOAD DATA
 // ------------------------------------------------------------
+
+function normalizeStatut(s) {
+  return String(s || '').trim().toLowerCase() === 'fixe' ? 'Fixe' : 'Variable';
+}
 
 async function loadAllData() {
   const [charges, revenus, credit] = await Promise.all([
@@ -288,27 +288,14 @@ async function loadAllData() {
   renderAll();
 }
 
-// ------------------------------------------------------------
-//  HELPERS MÉTIER
-// ------------------------------------------------------------
-
-function normalizeStatut(s) {
-  return String(s || '').trim().toLowerCase() === 'fixe' ? 'Fixe' : 'Variable';
-}
-
-// Une entrée apparaît dans le mois "month" (YYYY-MM) si :
-//   - statut = Variable et date dans ce mois (ancien comportement)
-//   - statut = Fixe   et date <= dernier jour de ce mois (récurrent à partir de sa date)
 function isInMonth(entry, month) {
   if (!entry.date) return false;
-  if (entry.statut === 'Fixe') {
-    return entry.date.slice(0, 7) <= month;
-  }
+  if (entry.statut === 'Fixe') return entry.date.slice(0, 7) <= month;
   return entry.date.startsWith(month);
 }
 
 // ------------------------------------------------------------
-//  RENDU
+//  RENDER
 // ------------------------------------------------------------
 
 function renderAll() {
@@ -344,21 +331,20 @@ function renderDashboard() {
 
   document.getElementById('card-charges').textContent = fmtMoney(totalCharges);
   document.getElementById('card-revenus').textContent = fmtMoney(totalRevenus);
-  const epargneEl = document.getElementById('card-epargne');
-  epargneEl.textContent = fmtMoney(epargne);
-  epargneEl.className = 'text-2xl font-bold ' + (epargne >= 0 ? 'text-emerald-600' : 'text-rose-600');
+  document.getElementById('card-epargne').textContent = fmtMoney(epargne);
 
-  // Pie chart charges
+  document.getElementById('month-label-dashboard').textContent = fmtMonth(state.month);
+
+  // Pie chart
   const byCategorie = {};
   chargesMois.forEach(c => {
-    byCategorie[c.categorie || 'Sans catégorie'] = (byCategorie[c.categorie || 'Sans catégorie'] || 0) + c.montant;
+    const k = c.categorie || 'Sans catégorie';
+    byCategorie[k] = (byCategorie[k] || 0) + c.montant;
   });
-
   const labels = Object.keys(byCategorie);
   const data = Object.values(byCategorie);
 
   if (state.chargesChart) state.chargesChart.destroy();
-
   if (labels.length === 0) {
     document.getElementById('no-charges-msg').classList.remove('hidden');
   } else {
@@ -366,43 +352,67 @@ function renderDashboard() {
     state.chargesChart = new Chart(document.getElementById('charges-chart'), {
       type: 'doughnut',
       data: {
-        labels: labels,
+        labels,
         datasets: [{
-          data: data,
-          backgroundColor: ['#6366f1','#ec4899','#10b981','#f59e0b','#3b82f6','#ef4444','#8b5cf6','#14b8a6','#f97316','#84cc16']
+          data,
+          backgroundColor: ['#6366f1', '#ec4899', '#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6', '#14b8a6', '#f97316', '#84cc16'],
+          borderWidth: 0,
+          spacing: 2
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        cutout: '65%',
         plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+          legend: { position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11, family: 'Inter' } } },
           tooltip: { callbacks: { label: ctx => `${ctx.label} : ${fmtMoney(ctx.parsed)}` } }
         }
       }
     });
   }
 
-  // Crédit restant (dernière entrée)
-  const lastCredit = state.credit.length ? state.credit[state.credit.length - 1] : null;
+  // Crédit
+  const sortedCredit = [...state.credit].sort((a, b) => a.date.localeCompare(b.date));
+  const lastCredit = sortedCredit.length ? sortedCredit[sortedCredit.length - 1] : null;
+  const firstCredit = sortedCredit.length ? sortedCredit[0] : null;
+
   document.getElementById('card-credit').textContent = lastCredit ? fmtMoney(lastCredit.restant) : '— €';
   document.getElementById('card-credit-date').textContent = lastCredit ? `Maj : ${fmtDate(lastCredit.date)}` : 'Aucune donnée';
 
-  // Derniers mouvements (5)
+  // Progress bar in dashboard card
+  const progressEl = document.getElementById('credit-progress');
+  if (firstCredit && firstCredit.restant > 0 && lastCredit) {
+    const pct = Math.max(0, Math.min(100, (1 - lastCredit.restant / firstCredit.restant) * 100));
+    progressEl.style.width = pct + '%';
+  } else {
+    progressEl.style.width = '0%';
+  }
+
+  // Derniers mouvements
   const all = [
     ...state.charges.map(c => ({ ...c, type: 'charge' })),
     ...state.revenus.map(r => ({ ...r, type: 'revenu' }))
   ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
 
   document.getElementById('recent-list').innerHTML = all.length === 0
-    ? '<li class="py-2 text-slate-400 text-center">Aucun mouvement</li>'
+    ? '<li class="text-gray-400 text-xs text-center py-2">Aucun mouvement</li>'
     : all.map(m => `
-      <li class="py-2 flex justify-between items-center">
-        <div>
-          <p class="text-slate-700">${escapeHtml(m.libelle)}</p>
-          <p class="text-xs text-slate-400">${fmtDate(m.date)}</p>
+      <li class="flex justify-between items-center">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${m.type === 'charge' ? 'bg-rose-50' : 'bg-emerald-50'}">
+            <svg class="w-4 h-4 ${m.type === 'charge' ? 'text-rose-600' : 'text-emerald-600'}" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              ${m.type === 'charge'
+                ? '<path stroke-linecap="round" stroke-linejoin="round" d="M17 13l-5 5m0 0l-5-5m5 5V6"/>'
+                : '<path stroke-linecap="round" stroke-linejoin="round" d="M7 11l5-5m0 0l5 5m-5-5v12"/>'}
+            </svg>
+          </div>
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(m.libelle)}</p>
+            <p class="text-xs text-gray-400">${fmtDate(m.date)}</p>
+          </div>
         </div>
-        <span class="${m.type === 'charge' ? 'text-rose-600' : 'text-emerald-600'} font-semibold">
+        <span class="text-sm font-semibold flex-shrink-0 ml-2 ${m.type === 'charge' ? 'text-rose-600' : 'text-emerald-600'}">
           ${m.type === 'charge' ? '-' : '+'}${fmtMoney(m.montant)}
         </span>
       </li>`).join('');
@@ -413,42 +423,23 @@ function renderDashboard() {
 function renderCharges() {
   const chargesMois = state.charges
     .filter(c => isInMonth(c, state.month))
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    .sort((a, b) => b.date.localeCompare(a.date));
 
-  const total = chargesMois.reduce((s, c) => s + c.montant, 0);
-  document.getElementById('charges-total').textContent = fmtMoney(total);
+  document.getElementById('charges-total').textContent = fmtMoney(chargesMois.reduce((s, c) => s + c.montant, 0));
 
   const tbody = document.getElementById('charges-tbody');
   tbody.innerHTML = chargesMois.length === 0
-    ? `<tr><td colspan="7" class="text-center py-6 text-slate-400">Aucune charge sur ce mois</td></tr>`
+    ? `<tr><td colspan="7" class="text-center py-12 text-gray-400 text-sm">Aucune charge sur ce mois</td></tr>`
     : chargesMois.map(c => `
-      <tr class="hover:bg-slate-50">
-        <td class="px-4 py-2 text-slate-600">${fmtDate(c.date)}</td>
-        <td class="px-4 py-2">${escapeHtml(c.libelle)}</td>
-        <td class="px-4 py-2"><span class="inline-block bg-rose-100 text-rose-700 text-xs px-2 py-0.5 rounded">${escapeHtml(c.categorie)}</span></td>
-        <td class="px-4 py-2 text-right font-semibold text-rose-600">${fmtMoney(c.montant)}</td>
-        <td class="px-4 py-2 text-slate-600">${escapeHtml(c.paye_par)}</td>
-        <td class="px-4 py-2">${statutBadge(c.statut, c._rowIndex, 'charge')}</td>
-        <td class="px-4 py-2 text-right">
-          <button data-delete-charge="${c._rowIndex}" data-statut="${c.statut}" title="Supprimer cette charge" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            <span class="text-xs font-medium hidden sm:inline">Supprimer</span>
-          </button>
-        </td>
+      <tr class="hover:bg-gray-50 transition">
+        <td class="px-6 py-3.5 text-gray-600 whitespace-nowrap">${fmtDate(c.date)}</td>
+        <td class="px-6 py-3.5 font-medium text-gray-900">${escapeHtml(c.libelle)}</td>
+        <td class="px-6 py-3.5"><span class="inline-block bg-rose-50 text-rose-700 text-xs px-2 py-0.5 rounded-md font-medium">${escapeHtml(c.categorie)}</span></td>
+        <td class="px-6 py-3.5 text-right font-semibold text-rose-600 whitespace-nowrap">${fmtMoney(c.montant)}</td>
+        <td class="px-6 py-3.5">${statutBadge(c.statut, c._rowIndex, 'charge')}</td>
+        <td class="px-6 py-3.5 text-gray-600">${escapeHtml(c.paye_par)}</td>
+        <td class="px-6 py-3.5 text-right">${deleteBtn('charge', c._rowIndex)}</td>
       </tr>`).join('');
-}
-
-function statutBadge(s, rowIndex, kind) {
-  // kind: 'charge' ou 'revenu'. Badge cliquable pour basculer Fixe/Variable.
-  const isFixe = s === 'Fixe';
-  const base = 'inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium cursor-pointer transition border';
-  const colors = isFixe
-    ? 'bg-indigo-100 text-indigo-700 border-indigo-200 hover:bg-indigo-200'
-    : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200';
-  const icon = isFixe
-    ? '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>'
-    : '';
-  return `<button data-toggle-${kind}-statut="${rowIndex}" data-current="${s}" title="Cliquer pour basculer Fixe ↔ Variable" class="${base} ${colors}">${icon}${s}</button>`;
 }
 
 // ---------- REVENUS ----------
@@ -456,27 +447,21 @@ function statutBadge(s, rowIndex, kind) {
 function renderRevenus() {
   const revenusMois = state.revenus
     .filter(r => isInMonth(r, state.month))
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    .sort((a, b) => b.date.localeCompare(a.date));
 
-  const total = revenusMois.reduce((s, r) => s + r.montant, 0);
-  document.getElementById('revenus-total').textContent = fmtMoney(total);
+  document.getElementById('revenus-total').textContent = fmtMoney(revenusMois.reduce((s, r) => s + r.montant, 0));
 
   const tbody = document.getElementById('revenus-tbody');
   tbody.innerHTML = revenusMois.length === 0
-    ? `<tr><td colspan="6" class="text-center py-6 text-slate-400">Aucun revenu sur ce mois</td></tr>`
+    ? `<tr><td colspan="6" class="text-center py-12 text-gray-400 text-sm">Aucun revenu sur ce mois</td></tr>`
     : revenusMois.map(r => `
-      <tr class="hover:bg-slate-50">
-        <td class="px-4 py-2 text-slate-600">${fmtDate(r.date)}</td>
-        <td class="px-4 py-2">${escapeHtml(r.libelle)}</td>
-        <td class="px-4 py-2 text-right font-semibold text-emerald-600">${fmtMoney(r.montant)}</td>
-        <td class="px-4 py-2 text-slate-600">${escapeHtml(r.percu_par)}</td>
-        <td class="px-4 py-2">${statutBadge(r.statut, r._rowIndex, 'revenu')}</td>
-        <td class="px-4 py-2 text-right">
-          <button data-delete-revenu="${r._rowIndex}" data-statut="${r.statut}" title="Supprimer ce revenu" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            <span class="text-xs font-medium hidden sm:inline">Supprimer</span>
-          </button>
-        </td>
+      <tr class="hover:bg-gray-50 transition">
+        <td class="px-6 py-3.5 text-gray-600 whitespace-nowrap">${fmtDate(r.date)}</td>
+        <td class="px-6 py-3.5 font-medium text-gray-900">${escapeHtml(r.libelle)}</td>
+        <td class="px-6 py-3.5 text-right font-semibold text-emerald-600 whitespace-nowrap">${fmtMoney(r.montant)}</td>
+        <td class="px-6 py-3.5">${statutBadge(r.statut, r._rowIndex, 'revenu')}</td>
+        <td class="px-6 py-3.5 text-gray-600">${escapeHtml(r.percu_par)}</td>
+        <td class="px-6 py-3.5 text-right">${deleteBtn('revenu', r._rowIndex)}</td>
       </tr>`).join('');
 }
 
@@ -484,19 +469,15 @@ function renderRevenus() {
 
 function renderCredit() {
   const sorted = [...state.credit].sort((a, b) => a.date.localeCompare(b.date));
-  const first = sorted.length ? sorted[0] : null;
-  const last = sorted.length ? sorted[sorted.length - 1] : null;
+  const first = sorted[0] || null;
+  const last = sorted[sorted.length - 1] || null;
 
-  // Reste actuel (dernière entrée)
-  document.getElementById('credit-current').textContent = last ? fmtMoney(last.restant) : '— €';
-  document.getElementById('credit-current-date').textContent = last ? `Dernière maj : ${fmtDate(last.date)}` : 'Aucune donnée';
-
-  // Montant total initial (1ère entrée chronologiquement)
+  // Montant initial
   document.getElementById('credit-initial').textContent = first ? fmtMoney(first.restant) : '— €';
   document.getElementById('credit-initial-date').textContent = first
     ? `Solde de départ au ${fmtDate(first.date)}`
     : 'Cliquer ✏️ pour initialiser';
-  // Le bouton est toujours actif : si une entrée existe il modifie, sinon il crée
+
   const editBtn = document.getElementById('credit-edit-initial');
   if (first) {
     editBtn.dataset.rowIndex = first._rowIndex;
@@ -506,25 +487,35 @@ function renderCredit() {
     delete editBtn.dataset.currentValue;
   }
 
+  // Montant restant
+  document.getElementById('credit-current').textContent = last ? fmtMoney(last.restant) : '— €';
+  document.getElementById('credit-current-date').textContent = last
+    ? `Dernière maj : ${fmtDate(last.date)}`
+    : 'Aucune donnée';
+
+  // Progress %
+  let pct = 0;
+  if (first && first.restant > 0 && last) {
+    pct = Math.max(0, Math.min(100, (1 - last.restant / first.restant) * 100));
+  }
+  document.getElementById('credit-percent').textContent = pct.toFixed(1) + '%';
+  document.getElementById('credit-progress-bar').style.width = pct + '%';
+
+  // Table
+  const display = [...state.credit].sort((a, b) => b.date.localeCompare(a.date));
   const tbody = document.getElementById('credit-tbody');
-  const displaySorted = [...state.credit].sort((a, b) => b.date.localeCompare(a.date));
-  tbody.innerHTML = displaySorted.length === 0
-    ? `<tr><td colspan="5" class="text-center py-6 text-slate-400">Aucun remboursement enregistré</td></tr>`
-    : displaySorted.map(c => `
-      <tr class="hover:bg-slate-50">
-        <td class="px-4 py-2 text-slate-600">${fmtDate(c.date)}</td>
-        <td class="px-4 py-2 text-right text-emerald-600 font-semibold">-${fmtMoney(c.rembourse)}</td>
-        <td class="px-4 py-2 text-right text-indigo-600 font-bold">${fmtMoney(c.restant)}</td>
-        <td class="px-4 py-2 text-slate-600">${escapeHtml(c.commentaire)}</td>
-        <td class="px-4 py-2 text-right">
-          <button data-delete-credit="${c._rowIndex}" title="Supprimer cette entrée" class="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded border border-transparent hover:border-rose-200 transition">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            <span class="text-xs font-medium hidden sm:inline">Supprimer</span>
-          </button>
-        </td>
+  tbody.innerHTML = display.length === 0
+    ? `<tr><td colspan="5" class="text-center py-12 text-gray-400 text-sm">Aucun remboursement</td></tr>`
+    : display.map(c => `
+      <tr class="hover:bg-gray-50 transition">
+        <td class="px-6 py-3.5 text-gray-600 whitespace-nowrap">${fmtDate(c.date)}</td>
+        <td class="px-6 py-3.5 text-right text-emerald-600 font-semibold whitespace-nowrap">-${fmtMoney(c.rembourse)}</td>
+        <td class="px-6 py-3.5 text-right text-indigo-600 font-bold whitespace-nowrap">${fmtMoney(c.restant)}</td>
+        <td class="px-6 py-3.5 text-gray-600">${escapeHtml(c.commentaire)}</td>
+        <td class="px-6 py-3.5 text-right">${deleteBtn('credit', c._rowIndex)}</td>
       </tr>`).join('');
 
-  // Chart évolution
+  // Chart
   if (state.creditChart) state.creditChart.destroy();
   if (sorted.length === 0) {
     document.getElementById('no-credit-msg').classList.remove('hidden');
@@ -540,96 +531,285 @@ function renderCredit() {
           borderColor: '#6366f1',
           backgroundColor: 'rgba(99,102,241,0.1)',
           fill: true,
-          tension: 0.3
+          tension: 0.3,
+          borderWidth: 2,
+          pointRadius: 4,
+          pointBackgroundColor: '#6366f1',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { callback: v => fmtMoney(v) } } }
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => fmtMoney(ctx.parsed.y) } } },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: v => fmtMoney(v), font: { family: 'Inter' } }, grid: { color: '#f3f4f6' } },
+          x: { ticks: { font: { family: 'Inter' } }, grid: { display: false } }
+        }
       }
     });
   }
 }
 
-// ------------------------------------------------------------
-//  ÉVÉNEMENTS UI
-// ------------------------------------------------------------
+// ---------- PREVISIONS ----------
 
-// Onglets
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const tab = btn.dataset.tab;
-    state.view = tab;
-    document.querySelectorAll('.tab-btn').forEach(b => {
-      b.classList.remove('border-indigo-600', 'text-indigo-600');
-      b.classList.add('border-transparent', 'text-slate-600');
+function calculateForecast(startMonth, targetMonth) {
+  const months = listMonthsBetween(startMonth, targetMonth);
+  let cumulative = 0;
+  const breakdown = months.map(m => {
+    const isCurrent = (m === startMonth);
+    const charges = state.charges.filter(c => {
+      if (isCurrent) return isInMonth(c, m);
+      return c.statut === 'Fixe' && c.date.slice(0, 7) <= m;
     });
-    btn.classList.add('border-indigo-600', 'text-indigo-600');
-    btn.classList.remove('border-transparent', 'text-slate-600');
-
-    document.querySelectorAll('.tab-view').forEach(v => v.classList.add('hidden'));
-    document.getElementById(tab + '-view').classList.remove('hidden');
-
-    // Le sélecteur de mois n'est pas pertinent pour l'onglet Crédit
-    document.getElementById('month-selector').style.display = tab === 'credit' ? 'none' : '';
+    const revenus = state.revenus.filter(r => {
+      if (isCurrent) return isInMonth(r, m);
+      return r.statut === 'Fixe' && r.date.slice(0, 7) <= m;
+    });
+    const totalCharges = charges.reduce((s, c) => s + c.montant, 0);
+    const totalRevenus = revenus.reduce((s, r) => s + r.montant, 0);
+    const net = totalRevenus - totalCharges;
+    cumulative += net;
+    return { month: m, revenus: totalRevenus, charges: totalCharges, net, cumulative };
   });
+  return {
+    months: breakdown,
+    totalCumulative: cumulative,
+    avgMonthly: breakdown.length ? cumulative / breakdown.length : 0
+  };
+}
+
+function calculateCreditForecast(months) {
+  // Estime le remboursement moyen mensuel à partir de l'historique
+  if (state.credit.length < 2) {
+    const last = state.credit[state.credit.length - 1];
+    return last ? last.restant : 0;
+  }
+  const sorted = [...state.credit].sort((a, b) => a.date.localeCompare(b.date));
+  const repayments = sorted.slice(1).map(c => c.rembourse).filter(r => r > 0);
+  const avgRepay = repayments.length ? repayments.reduce((s, x) => s + x, 0) / repayments.length : 0;
+  const last = sorted[sorted.length - 1];
+  return Math.max(0, last.restant - avgRepay * months);
+}
+
+function renderForecast() {
+  const targetInput = document.getElementById('forecast-target');
+  const targetMonth = targetInput.value;
+  if (!targetMonth) {
+    toast('Choisis une date cible', 'error');
+    return;
+  }
+  if (targetMonth < state.month) {
+    toast('La date cible doit être après le mois en cours', 'error');
+    return;
+  }
+
+  const forecast = calculateForecast(state.month, targetMonth);
+
+  document.getElementById('forecast-empty').classList.add('hidden');
+  document.getElementById('forecast-results').classList.remove('hidden');
+
+  document.getElementById('forecast-total').textContent = fmtMoney(forecast.totalCumulative);
+  document.getElementById('forecast-range').textContent = `De ${fmtMonth(state.month)} à ${fmtMonth(targetMonth)}`;
+  document.getElementById('forecast-avg').textContent = fmtMoney(forecast.avgMonthly);
+  document.getElementById('forecast-months-count').textContent = `Sur ${forecast.months.length} mois`;
+
+  const creditProjected = calculateCreditForecast(forecast.months.length - 1);
+  document.getElementById('forecast-credit').textContent = fmtMoney(creditProjected);
+
+  // Chart
+  if (state.forecastChart) state.forecastChart.destroy();
+  state.forecastChart = new Chart(document.getElementById('forecast-chart'), {
+    type: 'line',
+    data: {
+      labels: forecast.months.map(m => fmtMonth(m.month)),
+      datasets: [{
+        label: 'Épargne cumulée',
+        data: forecast.months.map(m => m.cumulative),
+        borderColor: '#6366f1',
+        backgroundColor: ctx => {
+          const c = ctx.chart.ctx.createLinearGradient(0, 0, 0, 250);
+          c.addColorStop(0, 'rgba(99,102,241,0.3)');
+          c.addColorStop(1, 'rgba(99,102,241,0)');
+          return c;
+        },
+        fill: true,
+        tension: 0.3,
+        borderWidth: 2.5,
+        pointRadius: 3,
+        pointBackgroundColor: '#6366f1',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointHoverRadius: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => fmtMoney(ctx.parsed.y) } } },
+      scales: {
+        y: { beginAtZero: true, ticks: { callback: v => fmtMoney(v), font: { family: 'Inter' } }, grid: { color: '#f3f4f6' } },
+        x: { ticks: { font: { family: 'Inter' }, maxRotation: 0, autoSkipPadding: 12 }, grid: { display: false } }
+      }
+    }
+  });
+
+  // Table
+  const tbody = document.getElementById('forecast-tbody');
+  tbody.innerHTML = forecast.months.map((m, i) => `
+    <tr class="hover:bg-gray-50 transition ${i === 0 ? 'bg-indigo-50/30' : ''}">
+      <td class="px-6 py-3 text-gray-700 font-medium">${fmtMonth(m.month)}${i === 0 ? ' <span class="text-[10px] font-semibold bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded ml-1">actuel</span>' : ''}</td>
+      <td class="px-6 py-3 text-right text-emerald-600 font-medium">${fmtMoney(m.revenus)}</td>
+      <td class="px-6 py-3 text-right text-rose-600 font-medium">${fmtMoney(m.charges)}</td>
+      <td class="px-6 py-3 text-right font-semibold ${m.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(m.net)}</td>
+      <td class="px-6 py-3 text-right font-bold text-indigo-600">${fmtMoney(m.cumulative)}</td>
+    </tr>
+  `).join('');
+}
+
+// ------------------------------------------------------------
+//  COMPONENTS
+// ------------------------------------------------------------
+
+function statutBadge(s, rowIndex, kind) {
+  const isFixe = s === 'Fixe';
+  const base = 'inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md font-medium cursor-pointer transition border';
+  const colors = isFixe
+    ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+    : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100';
+  const icon = isFixe
+    ? '<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>'
+    : '';
+  return `<button data-toggle-${kind}-statut="${rowIndex}" data-current="${s}" title="Cliquer pour basculer Fixe ↔ Variable" class="${base} ${colors}">${icon}${s}</button>`;
+}
+
+function deleteBtn(kind, rowIndex) {
+  return `<button data-delete-${kind}="${rowIndex}" title="Supprimer" class="inline-flex items-center justify-center w-8 h-8 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+  </button>`;
+}
+
+// ------------------------------------------------------------
+//  NAVIGATION (sidebar + mobile)
+// ------------------------------------------------------------
+
+function setActiveTab(tab) {
+  state.view = tab;
+
+  // Update sidebar
+  document.querySelectorAll('aside .nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  // Update mobile nav
+  document.querySelectorAll('.mobile-nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+
+  // Show the right view
+  document.querySelectorAll('.tab-view').forEach(v => v.classList.add('hidden'));
+  document.getElementById(tab + '-view').classList.remove('hidden');
+
+  // Update header
+  const meta = PAGE_META[tab];
+  document.getElementById('page-title').textContent = meta.title;
+  document.getElementById('page-subtitle').textContent = meta.subtitle;
+
+  // Show/hide month selector
+  document.getElementById('header-actions').style.display = meta.showMonth ? '' : 'none';
+  document.getElementById('month-selector-mobile').style.display = meta.showMonth ? '' : 'none';
+
+  // Scroll to top on mobile
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+document.querySelectorAll('[data-tab]').forEach(btn => {
+  btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
 });
 
-// Sélecteur de mois
-document.getElementById('month-input').addEventListener('change', e => {
+// ------------------------------------------------------------
+//  MONTH SELECTORS (sync desktop + mobile)
+// ------------------------------------------------------------
+
+function syncMonthInputs(value) {
+  document.getElementById('month-input').value = value;
+  document.getElementById('month-input-mobile').value = value;
+}
+
+function onMonthChange(e) {
   state.month = e.target.value;
+  syncMonthInputs(state.month);
   renderDashboard();
   renderCharges();
   renderRevenus();
+}
+
+document.getElementById('month-input').addEventListener('change', onMonthChange);
+document.getElementById('month-input-mobile').addEventListener('change', onMonthChange);
+
+// ------------------------------------------------------------
+//  REFRESH
+// ------------------------------------------------------------
+
+['refresh-btn', 'refresh-btn-mobile'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', async () => {
+    toast('Synchronisation...');
+    await loadAllData();
+    toast('Données à jour ✓', 'success');
+  });
 });
 
-// Rafraîchir
-document.getElementById('refresh-btn').addEventListener('click', async () => {
-  toast('Rafraîchissement...');
-  await loadAllData();
-  toast('Données à jour ✓', 'success');
-});
+// ------------------------------------------------------------
+//  FORMS
+// ------------------------------------------------------------
 
-// Formulaire Charge
 document.getElementById('charge-form').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const ok = await appendRow(CONFIG.SHEETS.CHARGES, [
-    fd.get('date'),
-    fd.get('libelle'),
-    fd.get('categorie'),
-    fd.get('montant'),
-    fd.get('paye_par') || '',
-    fd.get('statut') || 'Variable'
-  ]);
-  if (ok) {
+  if (await appendRow(CONFIG.SHEETS.CHARGES, [
+    fd.get('date'), fd.get('libelle'), fd.get('categorie'),
+    fd.get('montant'), fd.get('paye_par') || '', fd.get('statut') || 'Variable'
+  ])) {
     e.target.reset();
     toast('Charge ajoutée ✓', 'success');
     await loadAllData();
   }
 });
 
-// Formulaire Revenu
 document.getElementById('revenu-form').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const ok = await appendRow(CONFIG.SHEETS.REVENUS, [
-    fd.get('date'),
-    fd.get('libelle'),
-    fd.get('montant'),
-    fd.get('percu_par') || '',
-    fd.get('statut') || 'Variable'
-  ]);
-  if (ok) {
+  if (await appendRow(CONFIG.SHEETS.REVENUS, [
+    fd.get('date'), fd.get('libelle'), fd.get('montant'),
+    fd.get('percu_par') || '', fd.get('statut') || 'Fixe'
+  ])) {
     e.target.reset();
     toast('Revenu ajouté ✓', 'success');
     await loadAllData();
   }
 });
 
-// Édition inline du montant total initial du crédit
+document.getElementById('credit-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  if (await appendRow(CONFIG.SHEETS.CREDIT, [
+    fd.get('date'), fd.get('rembourse'), fd.get('restant'), fd.get('commentaire') || ''
+  ])) {
+    e.target.reset();
+    toast('Remboursement ajouté ✓', 'success');
+    await loadAllData();
+  }
+});
+
+// Bouton "Calculer" prévisions
+document.getElementById('forecast-btn').addEventListener('click', renderForecast);
+document.getElementById('forecast-target').addEventListener('change', () => {
+  // Auto-recalcul si déjà affiché
+  if (!document.getElementById('forecast-results').classList.contains('hidden')) {
+    renderForecast();
+  }
+});
+
+// ------------------------------------------------------------
+//  CREDIT INLINE EDIT
+// ------------------------------------------------------------
+
 (function setupCreditEdit() {
   const editBtn = document.getElementById('credit-edit-initial');
   const viewEl = document.getElementById('credit-initial-view');
@@ -643,38 +823,30 @@ document.getElementById('revenu-form').addEventListener('submit', async e => {
     viewEl.classList.add('hidden');
     editEl.classList.remove('hidden');
     editBtn.classList.add('hidden');
-    inputEl.focus();
-    inputEl.select();
+    inputEl.focus(); inputEl.select();
   }
-
   function exitEditMode() {
     editEl.classList.add('hidden');
     viewEl.classList.remove('hidden');
     editBtn.classList.remove('hidden');
   }
-
   async function saveValue() {
-    const raw = String(inputEl.value || '').replace(',', '.').trim();
-    const parsed = parseFloat(raw);
+    const parsed = parseFloat(String(inputEl.value || '').replace(',', '.').trim());
     if (isNaN(parsed) || parsed < 0) {
-      toast('Montant invalide. Entre un nombre positif (ex: 145000).', 'error');
+      toast('Montant invalide (ex: 145000)', 'error');
       inputEl.focus();
       return;
     }
     const rowIndex = editBtn.dataset.rowIndex;
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Enregistrement...';
+    saveBtn.disabled = true; saveBtn.textContent = '...';
     let ok = false;
     if (rowIndex === undefined || rowIndex === '') {
-      // Aucune entrée → on crée la première
       const today = new Date().toISOString().slice(0, 10);
       ok = await appendRow(CONFIG.SHEETS.CREDIT, [today, 0, parsed, 'Solde initial']);
     } else {
-      // Entrée existante → on met à jour la colonne C (Montant restant)
       ok = await updateCell(CONFIG.SHEETS.CREDIT, +rowIndex, 'C', parsed);
     }
-    saveBtn.disabled = false;
-    saveBtn.textContent = '✓ Enregistrer';
+    saveBtn.disabled = false; saveBtn.textContent = '✓ Enregistrer';
     if (ok) {
       toast('Montant total mis à jour ✓', 'success');
       exitEditMode();
@@ -686,71 +858,49 @@ document.getElementById('revenu-form').addEventListener('submit', async e => {
   cancelBtn.addEventListener('click', exitEditMode);
   saveBtn.addEventListener('click', saveValue);
   inputEl.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); saveValue(); }
+    if (e.key === 'Enter')  { e.preventDefault(); saveValue(); }
     if (e.key === 'Escape') { e.preventDefault(); exitEditMode(); }
   });
 })();
 
-// Formulaire Crédit
-document.getElementById('credit-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const ok = await appendRow(CONFIG.SHEETS.CREDIT, [
-    fd.get('date'),
-    fd.get('rembourse'),
-    fd.get('restant'),
-    fd.get('commentaire') || ''
-  ]);
-  if (ok) {
-    e.target.reset();
-    toast('Remboursement ajouté ✓', 'success');
-    await loadAllData();
-  }
-});
+// ------------------------------------------------------------
+//  DELETE + TOGGLE STATUT (event delegation)
+// ------------------------------------------------------------
 
-// Suppressions et toggle de statut (délégation)
 document.body.addEventListener('click', async e => {
   const charge = e.target.closest('[data-delete-charge]');
   const revenu = e.target.closest('[data-delete-revenu]');
   const credit = e.target.closest('[data-delete-credit]');
-  const toggleCharge = e.target.closest('[data-toggle-charge-statut]');
-  const toggleRevenu = e.target.closest('[data-toggle-revenu-statut]');
+  const togC   = e.target.closest('[data-toggle-charge-statut]');
+  const togR   = e.target.closest('[data-toggle-revenu-statut]');
 
-  if (toggleCharge) {
-    const rowIndex = +toggleCharge.dataset.toggleChargeStatut;
-    const newStatut = toggleCharge.dataset.current === 'Fixe' ? 'Variable' : 'Fixe';
+  if (togC) {
+    const rowIndex = +togC.dataset.toggleChargeStatut;
+    const newStatut = togC.dataset.current === 'Fixe' ? 'Variable' : 'Fixe';
     if (await updateCell(CONFIG.SHEETS.CHARGES, rowIndex, 'F', newStatut)) {
-      toast(`Charge marquée : ${newStatut}`, 'success');
+      toast(`Charge → ${newStatut}`, 'success');
       await loadAllData();
     }
     return;
   }
-  if (toggleRevenu) {
-    const rowIndex = +toggleRevenu.dataset.toggleRevenuStatut;
-    const newStatut = toggleRevenu.dataset.current === 'Fixe' ? 'Variable' : 'Fixe';
+  if (togR) {
+    const rowIndex = +togR.dataset.toggleRevenuStatut;
+    const newStatut = togR.dataset.current === 'Fixe' ? 'Variable' : 'Fixe';
     if (await updateCell(CONFIG.SHEETS.REVENUS, rowIndex, 'E', newStatut)) {
-      toast(`Revenu marqué : ${newStatut}`, 'success');
+      toast(`Revenu → ${newStatut}`, 'success');
       await loadAllData();
     }
     return;
   }
 
   if (charge) {
-    const isFixe = charge.dataset.statut === 'Fixe';
-    const msg = isFixe
-      ? '⚠️ Cette charge est FIXE (récurrente).\nLa supprimer la retirera de TOUS les mois (passés et futurs).\n\nContinuer ?'
-      : 'Supprimer cette charge ?';
-    if (!confirm(msg)) return;
+    if (!confirm('Supprimer cette charge ?')) return;
     if (await deleteRow(CONFIG.SHEETS.CHARGES, +charge.dataset.deleteCharge)) {
       toast('Charge supprimée', 'success');
       await loadAllData();
     }
   } else if (revenu) {
-    const isFixe = revenu.dataset.statut === 'Fixe';
-    const msg = isFixe
-      ? '⚠️ Ce revenu est FIXE (récurrent).\nLe supprimer le retirera de TOUS les mois (passés et futurs).\n\nContinuer ?'
-      : 'Supprimer ce revenu ?';
-    if (!confirm(msg)) return;
+    if (!confirm('Supprimer ce revenu ?')) return;
     if (await deleteRow(CONFIG.SHEETS.REVENUS, +revenu.dataset.deleteRevenu)) {
       toast('Revenu supprimé', 'success');
       await loadAllData();
@@ -765,7 +915,7 @@ document.body.addEventListener('click', async e => {
 });
 
 // ------------------------------------------------------------
-//  UTILITAIRES
+//  UTILS
 // ------------------------------------------------------------
 
 function show(id) { document.getElementById(id).classList.remove('hidden'); }
@@ -782,6 +932,34 @@ function fmtDate(s) {
   return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function fmtMonth(yearMonth) {
+  if (!yearMonth) return '';
+  const [y, m] = yearMonth.split('-').map(Number);
+  if (!y || !m) return yearMonth;
+  const d = new Date(y, m - 1, 1);
+  return d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+}
+
+function listMonthsBetween(start, end) {
+  const result = [];
+  let [y, m] = start.split('-').map(Number);
+  const [eY, eM] = end.split('-').map(Number);
+  while (y < eY || (y === eY && m <= eM)) {
+    result.push(`${y}-${String(m).padStart(2, '0')}`);
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return result;
+}
+
+function addMonthsToYearMonth(ym, count) {
+  let [y, m] = ym.split('-').map(Number);
+  m += count;
+  while (m > 12) { m -= 12; y++; }
+  while (m < 1)  { m += 12; y--; }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -790,11 +968,12 @@ let toastTimer = null;
 function toast(msg, type = 'info') {
   const el = document.getElementById('toast');
   el.textContent = msg;
-  el.className = 'fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-lg text-sm z-50 ' + ({
+  el.classList.remove('hidden');
+  el.className = 'fixed bottom-24 lg:bottom-6 right-4 lg:right-6 px-4 py-3 rounded-xl shadow-xl text-sm z-50 max-w-sm font-medium ' + ({
     success: 'bg-emerald-600 text-white',
     error: 'bg-rose-600 text-white',
-    info: 'bg-slate-800 text-white'
-  }[type] || 'bg-slate-800 text-white');
+    info: 'bg-gray-900 text-white'
+  }[type] || 'bg-gray-900 text-white');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.add('hidden'), 3000);
 }
