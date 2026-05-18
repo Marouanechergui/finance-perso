@@ -554,6 +554,51 @@
 
     <!-- Toast -->
     <div id="toast" class="hidden fixed bottom-24 lg:bottom-6 right-4 lg:right-6 px-4 py-3 rounded-xl shadow-xl text-sm z-50 max-w-sm font-medium"></div>
+
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 fade-in">
+        <div class="flex items-center justify-between mb-5">
+          <h3 class="font-bold text-gray-900 text-lg" id="edit-modal-title">Modifier</h3>
+          <button type="button" id="edit-modal-close" class="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg p-1 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <form id="edit-modal-form" class="space-y-3">
+          <div>
+            <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">Date</label>
+            <input type="date" name="date" required class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">Libellé</label>
+            <input type="text" name="libelle" required class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          </div>
+          <div id="edit-categorie-wrapper">
+            <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">Catégorie</label>
+            <input type="text" name="categorie" list="categories-list" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">Montant (€)</label>
+            <input type="number" step="0.01" name="montant" required class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1" id="edit-person-label">Payé par</label>
+            <input type="text" name="person" list="users-list" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">Statut</label>
+            <select name="statut" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+              <option value="Variable">Variable (ponctuel)</option>
+              <option value="Fixe">Fixe (récurrent)</option>
+            </select>
+          </div>
+          <div class="flex gap-2 pt-3">
+            <button type="button" id="edit-modal-cancel" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold py-2.5 px-4 rounded-lg transition">Annuler</button>
+            <button type="submit" id="edit-modal-save" class="flex-1 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition">✓ Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <!-- Scripts -->

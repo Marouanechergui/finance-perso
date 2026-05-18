@@ -206,6 +206,23 @@ async function updateCell(sheetName, rowIndex, colLetter, value) {
   }
 }
 
+// Met à jour une ligne entière (toutes les colonnes en une fois)
+async function updateRow(sheetName, rowIndex, values) {
+  try {
+    const endCol = String.fromCharCode(64 + values.length); // 1=A, 2=B, ...
+    await gapi.client.sheets.spreadsheets.values.update({
+      spreadsheetId: CONFIG.SHEET_ID,
+      range: `${sheetName}!A${rowIndex + 2}:${endCol}${rowIndex + 2}`,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [values] }
+    });
+    return true;
+  } catch (err) {
+    handleApiError(err, `update row ${rowIndex + 2}`);
+    return false;
+  }
+}
+
 async function deleteRow(sheetName, rowIndex) {
   try {
     const meta = await gapi.client.sheets.spreadsheets.get({ spreadsheetId: CONFIG.SHEET_ID });
@@ -438,7 +455,7 @@ function renderCharges() {
         <td class="px-6 py-3.5 text-right font-semibold text-rose-600 whitespace-nowrap">${fmtMoney(c.montant)}</td>
         <td class="px-6 py-3.5">${statutBadge(c.statut, c._rowIndex, 'charge')}</td>
         <td class="px-6 py-3.5 text-gray-600">${escapeHtml(c.paye_par)}</td>
-        <td class="px-6 py-3.5 text-right">${deleteBtn('charge', c._rowIndex)}</td>
+        <td class="px-6 py-3.5 text-right">${rowActions('charge', c._rowIndex)}</td>
       </tr>`).join('');
 }
 
@@ -461,7 +478,7 @@ function renderRevenus() {
         <td class="px-6 py-3.5 text-right font-semibold text-emerald-600 whitespace-nowrap">${fmtMoney(r.montant)}</td>
         <td class="px-6 py-3.5">${statutBadge(r.statut, r._rowIndex, 'revenu')}</td>
         <td class="px-6 py-3.5 text-gray-600">${escapeHtml(r.percu_par)}</td>
-        <td class="px-6 py-3.5 text-right">${deleteBtn('revenu', r._rowIndex)}</td>
+        <td class="px-6 py-3.5 text-right">${rowActions('revenu', r._rowIndex)}</td>
       </tr>`).join('');
 }
 
@@ -690,6 +707,16 @@ function deleteBtn(kind, rowIndex) {
   </button>`;
 }
 
+function rowActions(kind, rowIndex) {
+  // Bouton Modifier (crayon) — disponible pour 'charge' et 'revenu'
+  const editButton = (kind === 'charge' || kind === 'revenu')
+    ? `<button data-edit-${kind}="${rowIndex}" title="Modifier" class="inline-flex items-center justify-center w-8 h-8 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition mr-1">
+         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+       </button>`
+    : '';
+  return `<div class="inline-flex items-center">${editButton}${deleteBtn(kind, rowIndex)}</div>`;
+}
+
 // ------------------------------------------------------------
 //  NAVIGATION (sidebar + mobile)
 // ------------------------------------------------------------
@@ -864,7 +891,93 @@ document.getElementById('forecast-target').addEventListener('change', () => {
 })();
 
 // ------------------------------------------------------------
-//  DELETE + TOGGLE STATUT (event delegation)
+//  EDIT MODAL (pour Charges et Revenus)
+// ------------------------------------------------------------
+
+let currentEdit = { kind: null, rowIndex: null };
+
+function openEditModal(kind, rowIndex) {
+  const list = (kind === 'charge') ? state.charges : state.revenus;
+  const entry = list.find(e => e._rowIndex === rowIndex);
+  if (!entry) { toast('Entrée introuvable', 'error'); return; }
+
+  currentEdit = { kind, rowIndex };
+  const form = document.getElementById('edit-modal-form');
+
+  document.getElementById('edit-modal-title').textContent = kind === 'charge' ? 'Modifier la charge' : 'Modifier le revenu';
+  document.getElementById('edit-categorie-wrapper').style.display = kind === 'charge' ? '' : 'none';
+  document.getElementById('edit-person-label').textContent = kind === 'charge' ? 'Payé par' : 'Perçu par';
+
+  form.date.value = entry.date || '';
+  form.libelle.value = entry.libelle || '';
+  form.montant.value = entry.montant || '';
+  form.statut.value = entry.statut || 'Variable';
+  if (kind === 'charge') {
+    form.categorie.value = entry.categorie || '';
+    form.person.value = entry.paye_par || '';
+  } else {
+    form.categorie.value = '';
+    form.person.value = entry.percu_par || '';
+  }
+
+  document.getElementById('edit-modal').classList.remove('hidden');
+  setTimeout(() => form.libelle.focus(), 50);
+}
+
+function closeEditModal() {
+  document.getElementById('edit-modal').classList.add('hidden');
+  currentEdit = { kind: null, rowIndex: null };
+}
+
+document.getElementById('edit-modal-close').addEventListener('click', closeEditModal);
+document.getElementById('edit-modal-cancel').addEventListener('click', closeEditModal);
+document.getElementById('edit-modal').addEventListener('click', e => {
+  if (e.target.id === 'edit-modal') closeEditModal(); // clic sur l'overlay
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('edit-modal').classList.contains('hidden')) closeEditModal();
+});
+
+document.getElementById('edit-modal-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!currentEdit.kind) return;
+  const fd = new FormData(e.target);
+  const saveBtn = document.getElementById('edit-modal-save');
+  saveBtn.disabled = true; saveBtn.textContent = '...';
+
+  let values, sheetName;
+  if (currentEdit.kind === 'charge') {
+    values = [
+      fd.get('date'),
+      fd.get('libelle'),
+      fd.get('categorie') || '',
+      fd.get('montant'),
+      fd.get('person') || '',
+      fd.get('statut') || 'Variable'
+    ];
+    sheetName = CONFIG.SHEETS.CHARGES;
+  } else {
+    values = [
+      fd.get('date'),
+      fd.get('libelle'),
+      fd.get('montant'),
+      fd.get('person') || '',
+      fd.get('statut') || 'Fixe'
+    ];
+    sheetName = CONFIG.SHEETS.REVENUS;
+  }
+
+  const ok = await updateRow(sheetName, currentEdit.rowIndex, values);
+  saveBtn.disabled = false; saveBtn.textContent = '✓ Enregistrer';
+  if (ok) {
+    toast(currentEdit.kind === 'charge' ? 'Charge modifiée ✓' : 'Revenu modifié ✓', 'success');
+    closeEditModal();
+    await loadAllData();
+  }
+});
+
+// ------------------------------------------------------------
+//  DELETE + TOGGLE STATUT + EDIT (event delegation)
 // ------------------------------------------------------------
 
 document.body.addEventListener('click', async e => {
@@ -873,6 +986,11 @@ document.body.addEventListener('click', async e => {
   const credit = e.target.closest('[data-delete-credit]');
   const togC   = e.target.closest('[data-toggle-charge-statut]');
   const togR   = e.target.closest('[data-toggle-revenu-statut]');
+  const editC  = e.target.closest('[data-edit-charge]');
+  const editR  = e.target.closest('[data-edit-revenu]');
+
+  if (editC) { openEditModal('charge', +editC.dataset.editCharge); return; }
+  if (editR) { openEditModal('revenu', +editR.dataset.editRevenu); return; }
 
   if (togC) {
     const rowIndex = +togC.dataset.toggleChargeStatut;
