@@ -339,6 +339,33 @@ function isInMonth(entry, month) {
   return entry.date.startsWith(month);
 }
 
+// Calcule l'épargne totale à fin du mois donné :
+//   baseline (dernière entrée Epargne) + cumul des nets mensuels du 1er mois de données jusqu'à `month`
+function calculateEpargneTotal(month) {
+  const epSorted = [...state.epargne].sort((a, b) => a.date.localeCompare(b.date));
+  const last = epSorted[epSorted.length - 1];
+  const baseline = last ? last.montant : 0;
+
+  const allDates = [
+    ...state.charges.map(c => c.date),
+    ...state.revenus.map(r => r.date)
+  ].filter(Boolean).sort();
+
+  if (allDates.length === 0) return baseline;
+
+  const firstMonth = allDates[0].slice(0, 7);
+  if (firstMonth > month) return baseline;
+
+  const months = listMonthsBetween(firstMonth, month);
+  let cumul = 0;
+  months.forEach(m => {
+    const ch = state.charges.filter(c => isInMonth(c, m)).reduce((s, c) => s + c.montant, 0);
+    const re = state.revenus.filter(r => isInMonth(r, m)).reduce((s, r) => s + r.montant, 0);
+    cumul += (re - ch);
+  });
+  return baseline + cumul;
+}
+
 // ------------------------------------------------------------
 //  RENDER
 // ------------------------------------------------------------
@@ -377,6 +404,21 @@ function renderDashboard() {
   document.getElementById('card-charges').textContent = fmtMoney(totalCharges);
   document.getElementById('card-revenus').textContent = fmtMoney(totalRevenus);
   document.getElementById('card-epargne').textContent = fmtMoney(epargne);
+
+  // ÉPARGNE TOTALE = baseline (saisie page Crédit) + cumul des nets mensuels jusqu'au mois sélectionné
+  const epargneTotale = calculateEpargneTotal(state.month);
+  document.getElementById('card-epargne-totale').textContent = fmtMoney(epargneTotale);
+
+  // Info sous le montant : montre la baseline manuelle
+  const epSorted = [...state.epargne].sort((a, b) => a.date.localeCompare(b.date));
+  const epLast = epSorted[epSorted.length - 1];
+  const baseline = epLast ? epLast.montant : 0;
+  const infoEl = document.getElementById('card-epargne-totale-info');
+  if (epLast) {
+    infoEl.textContent = `Base ${fmtMoney(baseline)} + cumul`;
+  } else {
+    infoEl.textContent = 'Pas de base — saisir sur Crédit';
+  }
 
   document.getElementById('month-label-dashboard').textContent = fmtMonth(state.month);
 
