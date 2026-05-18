@@ -28,6 +28,7 @@ const CONFIG = {
     CHARGES: 'Charges',
     REVENUS: 'Revenus',
     CREDIT: 'Credit',
-    EPARGNE: 'Epargne'
+    EPARGNE: 'Epargne',
+    COURSES: 'Courses'
   }
 };

@@ -9,8 +9,10 @@ const state = {
   revenus: [],
   credit: [],
   epargne: [],
+  courses: [],
   view: 'dashboard',
   month: new Date().toISOString().slice(0, 7), // YYYY-MM
+  coursesFilter: { tag: null, showBought: false },
   chargesChart: null,
   creditChart: null,
   forecastChart: null
@@ -21,7 +23,8 @@ const PAGE_META = {
   charges:    { title: 'Charges',    subtitle: 'Suivi des dépenses du mois',       showMonth: true  },
   revenus:    { title: 'Revenus',    subtitle: 'Suivi des entrées d\'argent',      showMonth: true  },
   credit:     { title: 'Crédit',     subtitle: 'Suivi du remboursement',            showMonth: false },
-  previsions: { title: 'Prévisions', subtitle: 'Projection de l\'épargne future',  showMonth: false }
+  previsions: { title: 'Prévisions', subtitle: 'Projection de l\'épargne future',  showMonth: false },
+  courses:    { title: 'Courses',    subtitle: 'Liste des choses à acheter',        showMonth: false }
 };
 
 let tokenClient = null;
@@ -180,6 +183,20 @@ async function ensureHeaders() {
       });
     }
 
+    // 2bis. Créer la feuille Courses si elle n'existe pas
+    if (!existing.includes(CONFIG.SHEETS.COURSES)) {
+      await gapi.client.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: CONFIG.SHEET_ID,
+        resource: { requests: [{ addSheet: { properties: { title: CONFIG.SHEETS.COURSES } } }] }
+      });
+      await gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: CONFIG.SHEET_ID,
+        range: `${CONFIG.SHEETS.COURSES}!A1:E1`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [['Date', 'Libellé', 'Tag', 'Statut', 'Ajouté par']] }
+      });
+    }
+
     // 3. Vérifier les en-têtes Statut sur Charges et Revenus
     const res = await gapi.client.sheets.spreadsheets.values.batchGet({
       spreadsheetId: CONFIG.SHEET_ID,
@@ -289,11 +306,12 @@ function normalizeStatut(s) {
 }
 
 async function loadAllData() {
-  const [charges, revenus, credit, epargne] = await Promise.all([
+  const [charges, revenus, credit, epargne, courses] = await Promise.all([
     readSheet(CONFIG.SHEETS.CHARGES),
     readSheet(CONFIG.SHEETS.REVENUS),
     readSheet(CONFIG.SHEETS.CREDIT),
-    readSheet(CONFIG.SHEETS.EPARGNE)
+    readSheet(CONFIG.SHEETS.EPARGNE),
+    readSheet(CONFIG.SHEETS.COURSES)
   ]);
 
   state.epargne = epargne.map((r, i) => ({
@@ -301,6 +319,15 @@ async function loadAllData() {
     date: r[0] || '',
     montant: parseFloat(r[1]) || 0,
     commentaire: r[2] || ''
+  }));
+
+  state.courses = courses.map((r, i) => ({
+    _rowIndex: i,
+    date: r[0] || '',
+    libelle: r[1] || '',
+    tag: r[2] || '',
+    statut: r[3] || 'À acheter',
+    ajoute_par: r[4] || ''
   }));
 
   state.charges = charges.map((r, i) => ({
@@ -409,6 +436,7 @@ function renderAll() {
   renderCharges();
   renderRevenus();
   renderCredit();
+  renderCourses();
   refreshDatalists();
 }
 
@@ -419,10 +447,15 @@ function refreshDatalists() {
 
   const users = [...new Set([
     ...state.charges.map(c => c.paye_par),
-    ...state.revenus.map(r => r.percu_par)
+    ...state.revenus.map(r => r.percu_par),
+    ...state.courses.map(c => c.ajoute_par)
   ].filter(Boolean))];
   document.getElementById('users-list').innerHTML =
     users.map(u => `<option value="${escapeHtml(u)}">`).join('');
+
+  const tags = [...new Set(state.courses.map(c => c.tag).filter(Boolean))];
+  document.getElementById('course-tags-list').innerHTML =
+    tags.map(t => `<option value="${escapeHtml(t)}">`).join('');
 }
 
 // ---------- DASHBOARD ----------
@@ -684,6 +717,94 @@ function renderCredit() {
       }
     });
   }
+}
+
+// ---------- COURSES ----------
+
+function tagColor(tag) {
+  if (!tag) return 'bg-gray-100 text-gray-600 border-gray-200';
+  const palettes = [
+    'bg-blue-50 text-blue-700 border-blue-200',
+    'bg-emerald-50 text-emerald-700 border-emerald-200',
+    'bg-purple-50 text-purple-700 border-purple-200',
+    'bg-orange-50 text-orange-700 border-orange-200',
+    'bg-pink-50 text-pink-700 border-pink-200',
+    'bg-teal-50 text-teal-700 border-teal-200',
+    'bg-amber-50 text-amber-700 border-amber-200',
+    'bg-violet-50 text-violet-700 border-violet-200',
+    'bg-cyan-50 text-cyan-700 border-cyan-200',
+    'bg-rose-50 text-rose-700 border-rose-200'
+  ];
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) hash = (hash * 31 + tag.charCodeAt(i)) | 0;
+  return palettes[Math.abs(hash) % palettes.length];
+}
+
+function renderCourses() {
+  // Filtres
+  const allTags = [...new Set(state.courses.map(c => c.tag).filter(Boolean))].sort();
+  const filterEl = document.getElementById('course-tag-filters');
+  const activeTag = state.coursesFilter.tag;
+
+  filterEl.innerHTML = `
+    <button data-course-filter-tag="" class="text-xs font-medium px-3 py-1.5 rounded-full border transition ${activeTag === null ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}">
+      Tous
+      <span class="ml-1 opacity-70">${state.courses.length}</span>
+    </button>
+    ${allTags.map(t => {
+      const count = state.courses.filter(c => c.tag === t).length;
+      const isActive = activeTag === t;
+      return `<button data-course-filter-tag="${escapeHtml(t)}" class="text-xs font-medium px-3 py-1.5 rounded-full border transition ${isActive ? 'bg-gray-900 text-white border-gray-900' : `${tagColor(t)} hover:opacity-80`}">
+        ${escapeHtml(t)}
+        <span class="ml-1 opacity-70">${count}</span>
+      </button>`;
+    }).join('')}
+  `;
+
+  // Filter items
+  let items = [...state.courses];
+  if (activeTag !== null) items = items.filter(c => c.tag === activeTag);
+  if (!state.coursesFilter.showBought) items = items.filter(c => c.statut !== 'Acheté');
+
+  // Sort : à acheter d'abord (par date desc), achetés ensuite (par date desc)
+  items.sort((a, b) => {
+    if (a.statut !== b.statut) return a.statut === 'Acheté' ? 1 : -1;
+    return b.date.localeCompare(a.date);
+  });
+
+  const listEl = document.getElementById('courses-list');
+  const emptyEl = document.getElementById('courses-empty');
+
+  if (items.length === 0) {
+    listEl.innerHTML = '';
+    emptyEl.classList.remove('hidden');
+    return;
+  }
+  emptyEl.classList.add('hidden');
+
+  listEl.innerHTML = items.map(c => {
+    const isBought = c.statut === 'Acheté';
+    return `
+      <div class="bg-white rounded-xl border border-gray-100 p-4 hover:border-gray-200 transition flex items-center gap-3">
+        <label class="flex-shrink-0 cursor-pointer">
+          <input type="checkbox" data-toggle-course="${c._rowIndex}" ${isBought ? 'checked' : ''} class="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500 border-gray-300 cursor-pointer">
+        </label>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <p class="font-medium ${isBought ? 'line-through text-gray-400' : 'text-gray-900'}">${escapeHtml(c.libelle)}</p>
+            ${c.tag ? `<span class="text-[10px] font-medium px-2 py-0.5 rounded-md border ${tagColor(c.tag)}">${escapeHtml(c.tag)}</span>` : ''}
+          </div>
+          <p class="text-xs text-gray-400 mt-0.5">
+            ${c.ajoute_par ? `<span class="font-medium text-gray-500">${escapeHtml(c.ajoute_par)}</span> · ` : ''}
+            ${fmtDate(c.date)}
+          </p>
+        </div>
+        <button data-delete-course="${c._rowIndex}" title="Supprimer" class="inline-flex items-center justify-center w-8 h-8 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition flex-shrink-0">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        </button>
+      </div>
+    `;
+  }).join('');
 }
 
 // ---------- PREVISIONS ----------
@@ -1051,6 +1172,51 @@ document.getElementById('credit-form').addEventListener('submit', async e => {
   });
 })();
 
+// Formulaire Course
+document.getElementById('course-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const today = new Date().toISOString().slice(0, 10);
+  if (await appendRow(CONFIG.SHEETS.COURSES, [
+    today,
+    fd.get('libelle'),
+    fd.get('tag') || '',
+    'À acheter',
+    fd.get('ajoute_par') || ''
+  ])) {
+    e.target.reset();
+    toast('Article ajouté ✓', 'success');
+    await loadAllData();
+  }
+});
+
+// Toggle "Afficher les achetés"
+document.getElementById('course-show-bought').addEventListener('change', e => {
+  state.coursesFilter.showBought = e.target.checked;
+  renderCourses();
+});
+
+// Filtre par tag (délégation)
+document.getElementById('course-tag-filters').addEventListener('click', e => {
+  const btn = e.target.closest('[data-course-filter-tag]');
+  if (!btn) return;
+  const tag = btn.dataset.courseFilterTag;
+  state.coursesFilter.tag = tag === '' ? null : tag;
+  renderCourses();
+});
+
+// Checkbox "Acheté" sur les courses (délégation sur change)
+document.getElementById('courses-list').addEventListener('change', async e => {
+  const cb = e.target.closest('[data-toggle-course]');
+  if (!cb) return;
+  const rowIndex = +cb.dataset.toggleCourse;
+  const newStatut = cb.checked ? 'Acheté' : 'À acheter';
+  if (await updateCell(CONFIG.SHEETS.COURSES, rowIndex, 'D', newStatut)) {
+    toast(`Article : ${newStatut}`, 'success');
+    await loadAllData();
+  }
+});
+
 // Bouton "Calculer" prévisions
 document.getElementById('forecast-btn').addEventListener('click', renderForecast);
 document.getElementById('forecast-target').addEventListener('change', () => {
@@ -1211,6 +1377,7 @@ document.body.addEventListener('click', async e => {
   const charge = e.target.closest('[data-delete-charge]');
   const revenu = e.target.closest('[data-delete-revenu]');
   const credit = e.target.closest('[data-delete-credit]');
+  const course = e.target.closest('[data-delete-course]');
   const togC   = e.target.closest('[data-toggle-charge-statut]');
   const togR   = e.target.closest('[data-toggle-revenu-statut]');
   const editC  = e.target.closest('[data-edit-charge]');
@@ -1218,6 +1385,15 @@ document.body.addEventListener('click', async e => {
 
   if (editC) { openEditModal('charge', +editC.dataset.editCharge); return; }
   if (editR) { openEditModal('revenu', +editR.dataset.editRevenu); return; }
+
+  if (course) {
+    if (!confirm('Supprimer cet article ?')) return;
+    if (await deleteRow(CONFIG.SHEETS.COURSES, +course.dataset.deleteCourse)) {
+      toast('Article supprimé', 'success');
+      await loadAllData();
+    }
+    return;
+  }
 
   if (togC) {
     const rowIndex = +togC.dataset.toggleChargeStatut;
