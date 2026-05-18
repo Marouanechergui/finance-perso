@@ -27,6 +27,7 @@ const CONFIG = {
   SHEETS: {
     CHARGES: 'Charges',
     REVENUS: 'Revenus',
-    CREDIT: 'Credit'
+    CREDIT: 'Credit',
+    EPARGNE: 'Epargne'
   }
 };

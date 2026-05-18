@@ -8,6 +8,7 @@ const state = {
   charges: [],
   revenus: [],
   credit: [],
+  epargne: [],
   view: 'dashboard',
   month: new Date().toISOString().slice(0, 7), // YYYY-MM
   chargesChart: null,
@@ -161,6 +162,25 @@ async function appendRow(sheetName, values) {
 
 async function ensureHeaders() {
   try {
+    // 1. Vérifier l'existence de toutes les feuilles attendues
+    const meta = await gapi.client.sheets.spreadsheets.get({ spreadsheetId: CONFIG.SHEET_ID });
+    const existing = meta.result.sheets.map(s => s.properties.title);
+
+    // 2. Créer la feuille Epargne si elle n'existe pas
+    if (!existing.includes(CONFIG.SHEETS.EPARGNE)) {
+      await gapi.client.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: CONFIG.SHEET_ID,
+        resource: { requests: [{ addSheet: { properties: { title: CONFIG.SHEETS.EPARGNE } } }] }
+      });
+      await gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: CONFIG.SHEET_ID,
+        range: `${CONFIG.SHEETS.EPARGNE}!A1:C1`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [['Date', 'Montant', 'Commentaire']] }
+      });
+    }
+
+    // 3. Vérifier les en-têtes Statut sur Charges et Revenus
     const res = await gapi.client.sheets.spreadsheets.values.batchGet({
       spreadsheetId: CONFIG.SHEET_ID,
       ranges: [`${CONFIG.SHEETS.CHARGES}!A1:F1`, `${CONFIG.SHEETS.REVENUS}!A1:E1`]
@@ -269,11 +289,19 @@ function normalizeStatut(s) {
 }
 
 async function loadAllData() {
-  const [charges, revenus, credit] = await Promise.all([
+  const [charges, revenus, credit, epargne] = await Promise.all([
     readSheet(CONFIG.SHEETS.CHARGES),
     readSheet(CONFIG.SHEETS.REVENUS),
-    readSheet(CONFIG.SHEETS.CREDIT)
+    readSheet(CONFIG.SHEETS.CREDIT),
+    readSheet(CONFIG.SHEETS.EPARGNE)
   ]);
+
+  state.epargne = epargne.map((r, i) => ({
+    _rowIndex: i,
+    date: r[0] || '',
+    montant: parseFloat(r[1]) || 0,
+    commentaire: r[2] || ''
+  }));
 
   state.charges = charges.map((r, i) => ({
     _rowIndex: i,
@@ -485,9 +513,21 @@ function renderRevenus() {
 // ---------- CREDIT ----------
 
 function renderCredit() {
+  // -- ÉPARGNE
+  const epSorted = [...state.epargne].sort((a, b) => a.date.localeCompare(b.date));
+  const epLast = epSorted[epSorted.length - 1] || null;
+  document.getElementById('epargne-current').textContent = epLast ? fmtMoney(epLast.montant) : '— €';
+  document.getElementById('epargne-date').textContent = epLast
+    ? `Mis à jour le ${fmtDate(epLast.date)}`
+    : 'Aucune donnée — clique ✏️ pour saisir';
+
+  // -- CRÉDIT
   const sorted = [...state.credit].sort((a, b) => a.date.localeCompare(b.date));
   const first = sorted[0] || null;
   const last = sorted[sorted.length - 1] || null;
+
+  // Mise à jour du preview du formulaire (montant restant calculé)
+  updateCreditPreview();
 
   // Montant initial
   document.getElementById('credit-initial').textContent = first ? fmtMoney(first.restant) : '— €';
@@ -812,17 +852,111 @@ document.getElementById('revenu-form').addEventListener('submit', async e => {
   }
 });
 
+// Helper : calcule le nouveau restant en fonction du remboursement
+function computeNewRestant(rembourse) {
+  const sorted = [...state.credit].sort((a, b) => a.date.localeCompare(b.date));
+  const last = sorted[sorted.length - 1];
+  if (!last) return null; // aucune entrée existante
+  return Math.max(0, last.restant - (parseFloat(rembourse) || 0));
+}
+
+// Met à jour le texte de preview sous le formulaire crédit
+function updateCreditPreview() {
+  const input = document.getElementById('credit-rembourse-input');
+  const preview = document.getElementById('credit-form-preview');
+  if (!input || !preview) return;
+  const value = parseFloat(input.value);
+  if (isNaN(value) || value <= 0) {
+    preview.classList.add('hidden');
+    return;
+  }
+  const newRestant = computeNewRestant(value);
+  if (newRestant === null) {
+    preview.classList.remove('hidden');
+    preview.textContent = '⚠️ Initialise d\'abord le montant total ci-dessus';
+    preview.classList.remove('text-indigo-600');
+    preview.classList.add('text-amber-600');
+  } else {
+    preview.classList.remove('hidden');
+    preview.textContent = `→ Nouveau restant : ${fmtMoney(newRestant)}`;
+    preview.classList.add('text-indigo-600');
+    preview.classList.remove('text-amber-600');
+  }
+}
+
+document.getElementById('credit-rembourse-input').addEventListener('input', updateCreditPreview);
+
 document.getElementById('credit-form').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
+  const rembourse = parseFloat(fd.get('rembourse')) || 0;
+  const newRestant = computeNewRestant(rembourse);
+  if (newRestant === null) {
+    toast('Initialise d\'abord le montant total du crédit (carte en haut)', 'error');
+    return;
+  }
   if (await appendRow(CONFIG.SHEETS.CREDIT, [
-    fd.get('date'), fd.get('rembourse'), fd.get('restant'), fd.get('commentaire') || ''
+    fd.get('date'), rembourse, newRestant, fd.get('commentaire') || ''
   ])) {
     e.target.reset();
-    toast('Remboursement ajouté ✓', 'success');
+    updateCreditPreview();
+    toast(`Remboursement ajouté ✓ Reste : ${fmtMoney(newRestant)}`, 'success');
     await loadAllData();
   }
 });
+
+// ------------------------------------------------------------
+//  ÉPARGNE — édition inline (ajoute une nouvelle entrée à chaque save)
+// ------------------------------------------------------------
+
+(function setupEpargneEdit() {
+  const editBtn = document.getElementById('epargne-edit-btn');
+  const viewEl = document.getElementById('epargne-view');
+  const editEl = document.getElementById('epargne-edit');
+  const inputEl = document.getElementById('epargne-input');
+  const saveBtn = document.getElementById('epargne-save');
+  const cancelBtn = document.getElementById('epargne-cancel');
+
+  function enterEditMode() {
+    const epSorted = [...state.epargne].sort((a, b) => a.date.localeCompare(b.date));
+    const last = epSorted[epSorted.length - 1];
+    inputEl.value = last ? last.montant : '';
+    viewEl.classList.add('hidden');
+    editEl.classList.remove('hidden');
+    editBtn.classList.add('hidden');
+    inputEl.focus(); inputEl.select();
+  }
+  function exitEditMode() {
+    editEl.classList.add('hidden');
+    viewEl.classList.remove('hidden');
+    editBtn.classList.remove('hidden');
+  }
+  async function saveValue() {
+    const parsed = parseFloat(String(inputEl.value || '').replace(',', '.').trim());
+    if (isNaN(parsed) || parsed < 0) {
+      toast('Montant invalide (ex: 12500)', 'error');
+      inputEl.focus();
+      return;
+    }
+    saveBtn.disabled = true; saveBtn.textContent = '...';
+    const today = new Date().toISOString().slice(0, 10);
+    const ok = await appendRow(CONFIG.SHEETS.EPARGNE, [today, parsed, 'Mise à jour manuelle']);
+    saveBtn.disabled = false; saveBtn.textContent = '✓ Enregistrer';
+    if (ok) {
+      toast('Épargne mise à jour ✓', 'success');
+      exitEditMode();
+      await loadAllData();
+    }
+  }
+
+  editBtn.addEventListener('click', enterEditMode);
+  cancelBtn.addEventListener('click', exitEditMode);
+  saveBtn.addEventListener('click', saveValue);
+  inputEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); saveValue(); }
+    if (e.key === 'Escape') { e.preventDefault(); exitEditMode(); }
+  });
+})();
 
 // Bouton "Calculer" prévisions
 document.getElementById('forecast-btn').addEventListener('click', renderForecast);
