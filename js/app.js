@@ -339,11 +339,8 @@ function isInMonth(entry, month) {
   return entry.date.startsWith(month);
 }
 
-// Calcule l'épargne totale à fin du mois donné :
-//   baseline (dernière entrée Epargne)
-// + cumul des nets mensuels (revenus - charges) du 1er mois de données jusqu'à `month`
-// − somme des remboursements crédit jusqu'à `month`
-function calculateEpargneTotal(month) {
+// Retourne le détail du calcul (baseline + cumul - crédit)
+function computeEpargneBreakdown(month) {
   const epSorted = [...state.epargne].sort((a, b) => a.date.localeCompare(b.date));
   const last = epSorted[epSorted.length - 1];
   const baseline = last ? last.montant : 0;
@@ -366,12 +363,33 @@ function calculateEpargneTotal(month) {
     }
   }
 
-  // Remboursements crédit dont la date est <= mois sélectionné (on exclut le solde initial où rembourse=0)
-  const creditPayments = state.credit
-    .filter(c => c.date && c.rembourse > 0 && c.date.slice(0, 7) <= month)
-    .reduce((s, c) => s + c.rembourse, 0);
+  // Remboursements crédit dont la date est <= mois sélectionné (on exclut les rembourse=0 comme le solde initial)
+  const creditEntries = state.credit
+    .filter(c => c.date && c.rembourse > 0 && monthOfDate(c.date) <= month);
+  const creditPayments = creditEntries.reduce((s, c) => s + c.rembourse, 0);
 
-  return baseline + cumul - creditPayments;
+  return {
+    baseline,
+    cumul,
+    creditPayments,
+    creditEntries,
+    total: baseline + cumul - creditPayments
+  };
+}
+
+// Helper : extrait YYYY-MM d'une date qui peut être "2026-05-18" ou "18/05/2026" (locale FR)
+function monthOfDate(s) {
+  if (!s) return '';
+  s = String(s).trim();
+  if (/^\d{4}-\d{2}/.test(s)) return s.slice(0, 7);
+  // DD/MM/YYYY → YYYY-MM
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}`;
+  return s.slice(0, 7);
+}
+
+function calculateEpargneTotal(month) {
+  return computeEpargneBreakdown(month).total;
 }
 
 // Moyenne mensuelle de remboursement crédit (pour les projections futures)
@@ -421,20 +439,21 @@ function renderDashboard() {
   document.getElementById('card-revenus').textContent = fmtMoney(totalRevenus);
   document.getElementById('card-epargne').textContent = fmtMoney(epargne);
 
-  // ÉPARGNE TOTALE = baseline (saisie page Crédit) + cumul des nets mensuels jusqu'au mois sélectionné
-  const epargneTotale = calculateEpargneTotal(state.month);
-  document.getElementById('card-epargne-totale').textContent = fmtMoney(epargneTotale);
+  // ÉPARGNE TOTALE = baseline + cumul nets − remboursements crédit
+  const breakdown = computeEpargneBreakdown(state.month);
+  document.getElementById('card-epargne-totale').textContent = fmtMoney(breakdown.total);
 
-  // Info sous le montant : montre la baseline manuelle
-  const epSorted = [...state.epargne].sort((a, b) => a.date.localeCompare(b.date));
-  const epLast = epSorted[epSorted.length - 1];
-  const baseline = epLast ? epLast.montant : 0;
+  // Affichage détaillé du calcul sous le montant
   const infoEl = document.getElementById('card-epargne-totale-info');
-  if (epLast) {
-    infoEl.textContent = `Base ${fmtMoney(baseline)} + cumul`;
-  } else {
-    infoEl.textContent = 'Pas de base — saisir sur Crédit';
-  }
+  const cumulSign = breakdown.cumul >= 0 ? '+' : '−';
+  infoEl.innerHTML = `
+    Base ${fmtMoney(breakdown.baseline)}
+    <span class="opacity-70">${cumulSign}</span> Cumul ${fmtMoney(Math.abs(breakdown.cumul))}
+    ${breakdown.creditPayments > 0 ? `<span class="opacity-70">−</span> Crédit ${fmtMoney(breakdown.creditPayments)}` : ''}
+  `;
+
+  // Log de debug : ouvre F12 → Console pour voir
+  console.log('[Épargne totale] mois:', state.month, 'breakdown:', breakdown, 'state.credit:', state.credit);
 
   document.getElementById('month-label-dashboard').textContent = fmtMonth(state.month);
 
