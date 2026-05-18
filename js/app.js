@@ -340,7 +340,9 @@ function isInMonth(entry, month) {
 }
 
 // Calcule l'épargne totale à fin du mois donné :
-//   baseline (dernière entrée Epargne) + cumul des nets mensuels du 1er mois de données jusqu'à `month`
+//   baseline (dernière entrée Epargne)
+// + cumul des nets mensuels (revenus - charges) du 1er mois de données jusqu'à `month`
+// − somme des remboursements crédit jusqu'à `month`
 function calculateEpargneTotal(month) {
   const epSorted = [...state.epargne].sort((a, b) => a.date.localeCompare(b.date));
   const last = epSorted[epSorted.length - 1];
@@ -351,19 +353,33 @@ function calculateEpargneTotal(month) {
     ...state.revenus.map(r => r.date)
   ].filter(Boolean).sort();
 
-  if (allDates.length === 0) return baseline;
-
-  const firstMonth = allDates[0].slice(0, 7);
-  if (firstMonth > month) return baseline;
-
-  const months = listMonthsBetween(firstMonth, month);
   let cumul = 0;
-  months.forEach(m => {
-    const ch = state.charges.filter(c => isInMonth(c, m)).reduce((s, c) => s + c.montant, 0);
-    const re = state.revenus.filter(r => isInMonth(r, m)).reduce((s, r) => s + r.montant, 0);
-    cumul += (re - ch);
-  });
-  return baseline + cumul;
+  if (allDates.length > 0) {
+    const firstMonth = allDates[0].slice(0, 7);
+    if (firstMonth <= month) {
+      const months = listMonthsBetween(firstMonth, month);
+      months.forEach(m => {
+        const ch = state.charges.filter(c => isInMonth(c, m)).reduce((s, c) => s + c.montant, 0);
+        const re = state.revenus.filter(r => isInMonth(r, m)).reduce((s, r) => s + r.montant, 0);
+        cumul += (re - ch);
+      });
+    }
+  }
+
+  // Remboursements crédit dont la date est <= mois sélectionné (on exclut le solde initial où rembourse=0)
+  const creditPayments = state.credit
+    .filter(c => c.date && c.rembourse > 0 && c.date.slice(0, 7) <= month)
+    .reduce((s, c) => s + c.rembourse, 0);
+
+  return baseline + cumul - creditPayments;
+}
+
+// Moyenne mensuelle de remboursement crédit (pour les projections futures)
+function getAvgMonthlyRepayment() {
+  const sorted = [...state.credit].sort((a, b) => a.date.localeCompare(b.date));
+  const repayments = sorted.filter(c => c.rembourse > 0).map(c => c.rembourse);
+  if (!repayments.length) return 0;
+  return repayments.reduce((s, x) => s + x, 0) / repayments.length;
 }
 
 // ------------------------------------------------------------
@@ -654,22 +670,32 @@ function renderCredit() {
 // ---------- PREVISIONS ----------
 
 function calculateForecast(startMonth, targetMonth) {
-  // Pour chaque mois de la période, on prend :
-  //   - Toutes les Fixes dont date <= mois (récurrence)
-  //   - Toutes les Variables dont la date est exactement dans ce mois
-  // Cette logique est encapsulée dans isInMonth() — pas de distinction "mois courant" vs futur.
+  // Pour chaque mois on prend :
+  //   - Charges : Fixes (date <= mois) + Variables (date dans ce mois)
+  //   - Revenus : idem
+  //   - Crédit : si le mois a un remboursement saisi → ce montant. Sinon → moyenne historique.
+  //   - Net = revenus - charges - crédit
   const months = listMonthsBetween(startMonth, targetMonth);
+  const avgRepay = getAvgMonthlyRepayment();
+  const todayMonth = new Date().toISOString().slice(0, 7);
   let cumulative = 0;
   const breakdown = months.map(m => {
     const charges = state.charges.filter(c => isInMonth(c, m));
     const revenus = state.revenus.filter(r => isInMonth(r, m));
     const totalCharges = charges.reduce((s, c) => s + c.montant, 0);
     const totalRevenus = revenus.reduce((s, r) => s + r.montant, 0);
-    // Indicateur : ce mois contient-il des variables saisies ? (utile pour le rendu)
+
+    // Remboursement crédit : réel si saisi pour ce mois, sinon moyenne (estimation)
+    const realRepayments = state.credit
+      .filter(c => c.date && c.rembourse > 0 && c.date.startsWith(m))
+      .reduce((s, c) => s + c.rembourse, 0);
+    const creditPayment = (realRepayments > 0) ? realRepayments
+                        : (m > todayMonth ? avgRepay : 0); // futurs mois sans saisie → moyenne
+
     const hasVariables = charges.some(c => c.statut !== 'Fixe') || revenus.some(r => r.statut !== 'Fixe');
-    const net = totalRevenus - totalCharges;
+    const net = totalRevenus - totalCharges - creditPayment;
     cumulative += net;
-    return { month: m, revenus: totalRevenus, charges: totalCharges, net, cumulative, hasVariables };
+    return { month: m, revenus: totalRevenus, charges: totalCharges, credit: creditPayment, net, cumulative, hasVariables };
   });
   return {
     months: breakdown,
@@ -765,6 +791,7 @@ function renderForecast() {
         <td class="px-6 py-3 text-gray-700 font-medium whitespace-nowrap">${fmtMonth(m.month)}${badges.join('')}</td>
         <td class="px-6 py-3 text-right text-emerald-600 font-medium">${fmtMoney(m.revenus)}</td>
         <td class="px-6 py-3 text-right text-rose-600 font-medium">${fmtMoney(m.charges)}</td>
+        <td class="px-6 py-3 text-right text-indigo-600 font-medium">${m.credit > 0 ? '-' + fmtMoney(m.credit) : '—'}</td>
         <td class="px-6 py-3 text-right font-semibold ${m.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(m.net)}</td>
         <td class="px-6 py-3 text-right font-bold text-indigo-600">${fmtMoney(m.cumulative)}</td>
       </tr>
