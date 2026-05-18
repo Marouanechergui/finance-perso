@@ -612,23 +612,22 @@ function renderCredit() {
 // ---------- PREVISIONS ----------
 
 function calculateForecast(startMonth, targetMonth) {
+  // Pour chaque mois de la période, on prend :
+  //   - Toutes les Fixes dont date <= mois (récurrence)
+  //   - Toutes les Variables dont la date est exactement dans ce mois
+  // Cette logique est encapsulée dans isInMonth() — pas de distinction "mois courant" vs futur.
   const months = listMonthsBetween(startMonth, targetMonth);
   let cumulative = 0;
   const breakdown = months.map(m => {
-    const isCurrent = (m === startMonth);
-    const charges = state.charges.filter(c => {
-      if (isCurrent) return isInMonth(c, m);
-      return c.statut === 'Fixe' && c.date.slice(0, 7) <= m;
-    });
-    const revenus = state.revenus.filter(r => {
-      if (isCurrent) return isInMonth(r, m);
-      return r.statut === 'Fixe' && r.date.slice(0, 7) <= m;
-    });
+    const charges = state.charges.filter(c => isInMonth(c, m));
+    const revenus = state.revenus.filter(r => isInMonth(r, m));
     const totalCharges = charges.reduce((s, c) => s + c.montant, 0);
     const totalRevenus = revenus.reduce((s, r) => s + r.montant, 0);
+    // Indicateur : ce mois contient-il des variables saisies ? (utile pour le rendu)
+    const hasVariables = charges.some(c => c.statut !== 'Fixe') || revenus.some(r => r.statut !== 'Fixe');
     const net = totalRevenus - totalCharges;
     cumulative += net;
-    return { month: m, revenus: totalRevenus, charges: totalCharges, net, cumulative };
+    return { month: m, revenus: totalRevenus, charges: totalCharges, net, cumulative, hasVariables };
   });
   return {
     months: breakdown,
@@ -714,15 +713,21 @@ function renderForecast() {
 
   // Table
   const tbody = document.getElementById('forecast-tbody');
-  tbody.innerHTML = forecast.months.map((m, i) => `
-    <tr class="hover:bg-gray-50 transition ${i === 0 ? 'bg-indigo-50/30' : ''}">
-      <td class="px-6 py-3 text-gray-700 font-medium">${fmtMonth(m.month)}${i === 0 ? ' <span class="text-[10px] font-semibold bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded ml-1">actuel</span>' : ''}</td>
-      <td class="px-6 py-3 text-right text-emerald-600 font-medium">${fmtMoney(m.revenus)}</td>
-      <td class="px-6 py-3 text-right text-rose-600 font-medium">${fmtMoney(m.charges)}</td>
-      <td class="px-6 py-3 text-right font-semibold ${m.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(m.net)}</td>
-      <td class="px-6 py-3 text-right font-bold text-indigo-600">${fmtMoney(m.cumulative)}</td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = forecast.months.map((m, i) => {
+    const badges = [];
+    if (i === 0) badges.push('<span class="text-[10px] font-semibold bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded ml-1">actuel</span>');
+    if (m.hasVariables) badges.push('<span class="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded ml-1" title="Contient des entrées variables réellement saisies">réel</span>');
+    else                badges.push('<span class="text-[10px] font-semibold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded ml-1" title="Projection basée uniquement sur les entrées fixes">projeté</span>');
+    return `
+      <tr class="hover:bg-gray-50 transition ${i === 0 ? 'bg-indigo-50/30' : ''}">
+        <td class="px-6 py-3 text-gray-700 font-medium whitespace-nowrap">${fmtMonth(m.month)}${badges.join('')}</td>
+        <td class="px-6 py-3 text-right text-emerald-600 font-medium">${fmtMoney(m.revenus)}</td>
+        <td class="px-6 py-3 text-right text-rose-600 font-medium">${fmtMoney(m.charges)}</td>
+        <td class="px-6 py-3 text-right font-semibold ${m.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(m.net)}</td>
+        <td class="px-6 py-3 text-right font-bold text-indigo-600">${fmtMoney(m.cumulative)}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 // ------------------------------------------------------------
